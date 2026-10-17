@@ -86,11 +86,13 @@ public static class SslComRequests
     {
         if (options.Otp is { Length: > 0 } otp)
         {
-            return otp;
+            return otp.StartsWith("otpauth://", StringComparison.OrdinalIgnoreCase)
+                ? CertumTotp.Parse(otp, CertumTotpAlgorithm.Sha1).GenerateCode(clock.GetUtcNow())
+                : otp;
         }
 
         return options.TotpSecret is { Length: > 0 } secret
-            ? CertumTotp.Parse(secret).GenerateCode(clock.GetUtcNow())
+            ? CertumTotp.Parse(secret, CertumTotpAlgorithm.Sha1).GenerateCode(clock.GetUtcNow())
             : throw new ProviderConfigurationException(
                 "SSL.com eSigner requires '--provider-option totp-secret=<base32|otpauth>' or '--provider-option otp=<code>'.");
     }

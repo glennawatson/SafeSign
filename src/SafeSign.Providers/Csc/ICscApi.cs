@@ -18,7 +18,7 @@ public interface ICscApi
     /// <returns>The credentials info response.</returns>
     [Post("/{**path}")]
     Task<IApiResponse<CscCredentialsInfoReply>> GetCredentialsInfoAsync(
-        [Query(Format = "U")] string path,
+        string path,
         [Header("Authorization")] string authorization,
         [Body] CscCredentialsInfoRequest request,
         CancellationToken cancellationToken);
@@ -31,7 +31,7 @@ public interface ICscApi
     /// <returns>The authorize response containing the SAD token.</returns>
     [Post("/{**path}")]
     Task<IApiResponse<CscAuthorizeReply>> AuthorizeAsync(
-        [Query(Format = "U")] string path,
+        string path,
         [Header("Authorization")] string authorization,
         [Body] CscAuthorizeRequest request,
         CancellationToken cancellationToken);
@@ -44,7 +44,7 @@ public interface ICscApi
     /// <returns>The signHash response.</returns>
     [Post("/{**path}")]
     Task<IApiResponse<SslComSignHashResponse>> SignHashAsync(
-        [Query(Format = "U")] string path,
+        string path,
         [Header("Authorization")] string authorization,
         [Body] CscSignHashRequest request,
         CancellationToken cancellationToken);

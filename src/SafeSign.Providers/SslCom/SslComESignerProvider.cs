@@ -63,7 +63,7 @@ public sealed class SslComESignerProvider(
                 ProviderSettingsReader.Find(settings, "client-id", "SSLCOM_CLIENT_ID") ?? DefaultClientId,
                 ProviderSettingsReader.Find(settings, "username", "SSLCOM_USERNAME"),
                 ProviderSettingsReader.Find(settings, PasswordKey, "SSLCOM_PASSWORD"),
-                ProviderSettingsReader.Find(settings, "totp-secret", "SSLCOM_TOTP_SECRET"),
+                ProviderSettingsReader.Find(settings, "totp-secret", "otp-uri", "SSLCOM_TOTP_SECRET", "SSLCOM_OTP_URI"),
                 ProviderSettingsReader.Find(settings, "otp", "SSLCOM_OTP"),
                 baseUri,
                 tokenUri),

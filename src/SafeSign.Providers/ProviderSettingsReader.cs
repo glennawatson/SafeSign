@@ -21,6 +21,11 @@ public static class ProviderSettingsReader
 
         foreach (var name in environmentVariables)
         {
+            if (settings.Options.TryGetValue(name, out var aliasValue) && aliasValue.Length > 0)
+            {
+                return aliasValue;
+            }
+
             if (settings.Environment(name) is { Length: > 0 } fromEnvironment)
             {
                 return fromEnvironment;

@@ -41,6 +41,9 @@ public sealed record CertumOptions
     /// <summary>Gets the optional virtual card serial (<c>cardno</c>) to select when the account holds multiple cards.</summary>
     public string? CardSerial { get; init; }
 
+    /// <summary>Gets the optional expected SHA-256 (or SHA-1) certificate fingerprint used to select and verify the SimplySign certificate.</summary>
+    public string? CertificateFingerprint { get; init; }
+
     /// <summary>Gets an optional path to a PEM, DER, or PKCS #7 file containing intermediate issuer certificates.</summary>
     public string? AdditionalCertificatesPath { get; init; }
 
@@ -66,9 +69,9 @@ public sealed record CertumOptions
     public static CertumOptions FromSettings(ProviderSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var email = ProviderSettingsReader.Find(settings, "email", "CERTUM_SIMPLYSIGN_EMAIL", "CERTUM_USER_ID");
-        var otpCode = ProviderSettingsReader.Find(settings, "otp", "CERTUM_SIMPLYSIGN_OTP");
-        var totpSecret = ProviderSettingsReader.Find(settings, "totp-secret", "CERTUM_SIMPLYSIGN_TOTP_SECRET", "CERTUM_OTP_URI");
+        var email = ProviderSettingsReader.Find(settings, "email", "username", "user-id", "CERTUM_SIMPLYSIGN_EMAIL", "CERTUM_USER_ID", "CERTUM_USERNAME");
+        var otpCode = ProviderSettingsReader.Find(settings, "otp", "CERTUM_SIMPLYSIGN_OTP", "CERTUM_OTP");
+        var totpSecret = ProviderSettingsReader.Find(settings, "totp-secret", "otp-uri", "CERTUM_SIMPLYSIGN_TOTP_SECRET", "CERTUM_OTP_URI", "CERTUM_TOTP_SECRET");
         var accessToken = ProviderSettingsReader.Find(settings, "access-token", "CERTUM_SIMPLYSIGN_ACCESS_TOKEN");
         var refreshToken = ProviderSettingsReader.Find(settings, "refresh-token", "CERTUM_SIMPLYSIGN_REFRESH_TOKEN");
 
@@ -88,7 +91,8 @@ public sealed record CertumOptions
             TotpSecret = totpSecret,
             AccessToken = accessToken,
             RefreshToken = refreshToken,
-            CardSerial = ProviderSettingsReader.Find(settings, "card-serial", "CERTUM_SIMPLYSIGN_CARD_SERIAL"),
+            CardSerial = ProviderSettingsReader.Find(settings, "card-serial", "CERTUM_SIMPLYSIGN_CARD_SERIAL", "CERTUM_CARD_SERIAL"),
+            CertificateFingerprint = ProviderSettingsReader.Find(settings, "cert-sha256", "cert-fingerprint", "thumbprint", "CERTUM_CERT_FINGERPRINT", "CERTUM_SIMPLYSIGN_CERT_SHA256"),
             AdditionalCertificatesPath = ProviderSettingsReader.Find(settings, "certificate-chain-path", "CERTUM_SIMPLYSIGN_CERTIFICATE_CHAIN_PATH"),
             Endpoint = endpointText is { Length: > 0 } ? new Uri(endpointText) : DefaultEndpoint,
             ClientId = ProviderSettingsReader.Find(settings, "client-id", "CERTUM_SIMPLYSIGN_CLIENT_ID") ?? DefaultClientId,

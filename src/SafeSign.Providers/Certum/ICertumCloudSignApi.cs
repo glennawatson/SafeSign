@@ -141,4 +141,13 @@ public interface ICertumCloudSignApi
         string path,
         [Header("Authorization")] string authorization,
         CancellationToken cancellationToken);
+
+    /// <summary>Downloads an issuing CA certificate from an X.509 Authority Information Access (AIA) <c>CA Issuers</c> URI path.</summary>
+    /// <param name="path">The relative path from the AIA <c>CA Issuers</c> URI.</param>
+    /// <param name="cancellationToken">Cancels the HTTP request.</param>
+    /// <returns>The HTTP response containing the DER or PKCS #7 certificate payload.</returns>
+    [Get("/{**path}")]
+    Task<HttpResponseMessage> GetAiaCertificateAsync(
+        string path,
+        CancellationToken cancellationToken);
 }

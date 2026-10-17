@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Refit;
+using SafeSign.Providers.Certum;
 using SafeSign.Providers.Shared;
 using SafeSign.Providers.SignPath;
 using SafeSign.Signing;
@@ -116,7 +117,7 @@ public sealed class CscProvider : ISigningProvider
         if (sad is not { Length: > 0 })
         {
             var authPath = CombinePath("credentials/authorize");
-            CscAuthorizeRequest authRequest = new(_options.CredentialId, 1, [hashBase64], _options.Pin, _options.Otp);
+            CscAuthorizeRequest authRequest = new(_options.CredentialId, 1, [hashBase64], _options.Pin, ResolveOtp());
             using var authResponse = await ProviderRetry.ExecuteAsync(
                 ct => api.AuthorizeAsync(authPath, auth, authRequest, ct),
                 _time,
@@ -142,6 +143,25 @@ public sealed class CscProvider : ISigningProvider
         return signReply.Signatures is [var firstSig, ..] && firstSig.Length > 0
             ? Convert.FromBase64String(firstSig)
             : throw new ProviderRequestException("CSC signatures/signHash returned no signature.");
+    }
+
+    /// <summary>Resolves the optional OTP code from <see cref="CscOptions.TotpSecret"/> or <see cref="CscOptions.Otp"/>.</summary>
+    /// <returns>The OTP string, or <see langword="null"/> when neither is configured.</returns>
+    private string? ResolveOtp()
+    {
+        if (_options.TotpSecret is { Length: > 0 } secret)
+        {
+            return CertumTotp.Parse(secret, CertumTotpAlgorithm.Sha1).GenerateCode(_time.GetUtcNow());
+        }
+
+        if (_options.Otp is { Length: > 0 } otp)
+        {
+            return otp.StartsWith("otpauth://", StringComparison.OrdinalIgnoreCase)
+                ? CertumTotp.Parse(otp, CertumTotpAlgorithm.Sha1).GenerateCode(_time.GetUtcNow())
+                : otp;
+        }
+
+        return null;
     }
 
     /// <summary>Combines the base path of <see cref="CscOptions.Endpoint"/> with a relative route.</summary>

@@ -31,6 +31,12 @@ public sealed class CloudProviderTests
     /// <summary>The random secret length in bytes.</summary>
     private const int RandomSecretBytes = 16;
 
+    /// <summary>The SSL.com eSigner CSC signHash route.</summary>
+    private const string SslComSignHashRoute = "/csc/v0/signatures/signHash";
+
+    /// <summary>The synthetic SSL.com RSA credential ID.</summary>
+    private const string SslComRsaCredentialId = "cred-rsa";
+
     /// <summary>Verifies that <see cref="AwsKmsProvider"/> signs a digest with AWS SigV4 headers and <c>TrentService.Sign</c>.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
@@ -359,7 +365,7 @@ public sealed class CloudProviderTests
             var digest = SHA256.HashData("SSL.com eSigner payload"u8);
             var expectedSig = rsa.SignHash(digest, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
-            using var http = new StubHttp { { Route.Post("/csc/v0/signatures/signHash"), Reply.Json($$"""{"signatures":["{{Convert.ToBase64String(expectedSig)}}"]}""") } };
+            using var http = new StubHttp { { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{Convert.ToBase64String(expectedSig)}}"]}""") } };
 
             var accessToken = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
             var totpSecret = GetTestBase32TotpSecret();
@@ -373,6 +379,129 @@ public sealed class CloudProviderTests
             var signature = await provider.SignDigestAsync(new(digest, HashAlgorithmName.SHA256), CancellationToken.None);
 
             await Assert.That(CryptographicOperations.FixedTimeEquals(signature, expectedSig)).IsTrue();
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Verifies <see cref="SslComESignerProvider.FromSettings"/>, OAuth password token exchange, <c>otpauth://</c> OTP SAD, and ECDSA algorithm OIDs.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task SslComESignerProvider_CoversFromSettingsOAuthOtpAndEcdsaAlgorithms()
+    {
+        var tempDir = Directory.CreateTempSubdirectory("safesign-sslcom-ecdsa-");
+        try
+        {
+            using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP384);
+            var now = TimeProvider.System.GetUtcNow();
+            var ecdsaRequest = new CertificateRequest("CN=SafeSign SSL.com EC", ecdsa, HashAlgorithmName.SHA384);
+            using var ecdsaCertificate = ecdsaRequest.CreateSelfSigned(now.AddDays(-1), now.AddYears(1));
+            var ecdsaCertPath = Path.Combine(tempDir.FullName, "sslcom-ec.pem");
+            await File.WriteAllTextAsync(ecdsaCertPath, ecdsaCertificate.ExportCertificatePem());
+
+            var pfxPassword = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
+            var pfxPath = Path.Combine(tempDir.FullName, "client.pfx");
+            await File.WriteAllBytesAsync(pfxPath, ecdsaCertificate.Export(X509ContentType.Pfx, pfxPassword));
+            var mtlsSettings = Shared.ProviderHttp.CreateSettings(SslComJsonContext.Default, null, pfxPath, pfxPassword);
+            using var mtlsHandler = mtlsSettings.HttpMessageHandlerFactory!();
+            await Assert.That(mtlsHandler).IsNotNull();
+
+            var missingPfxSettings = Shared.ProviderHttp.CreateSettings(SslComJsonContext.Default, null, Path.Combine(tempDir.FullName, "missing.pfx"), null);
+            _ = Assert.Throws<ProviderConfigurationException>(() => _ = missingPfxSettings.HttpMessageHandlerFactory!());
+
+            var defaultSettings = Shared.ProviderHttp.CreateSettings(SslComJsonContext.Default, null);
+            using var defaultHandler = defaultSettings.HttpMessageHandlerFactory!();
+            await Assert.That(defaultHandler).IsNotNull();
+
+            var digest384 = SHA384.HashData("SSL.com EC384"u8);
+            var digest512 = SHA512.HashData("SSL.com EC512"u8);
+            var digest256 = SHA256.HashData("SSL.com EC256"u8);
+            var sigBase64 = Convert.ToBase64String(ecdsa.SignHash(digest384));
+
+            using var http = new StubHttp
+            {
+                { Route.Post("/oauth2/token"), Reply.Json("""{"access_token":"ssl-oauth-tok","expires_in":3600}""") },
+                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+            };
+
+            Dictionary<string, string> opts = new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["credential-id"] = "cred-ec",
+                ["cert-file"] = ecdsaCertPath,
+                ["username"] = "ssl-user",
+                ["password"] = pfxPassword,
+                ["otp"] = $"otpauth://totp/SSL:user?secret={GetTestBase32TotpSecret()}",
+                ["endpoint"] = "https://ds.ssl.com",
+                ["token-endpoint"] = "https://login.ssl.com/oauth2/token",
+            };
+            var settings = new ProviderSettings(opts, static _ => null);
+            var provider = SslComESignerProvider.FromSettings(settings, new(http.ToSettings(), TimeProvider.System));
+            await Assert.That(provider.Name).IsEqualTo("sslcom-esigner");
+
+            var s1 = await provider.SignDigestAsync(new(digest384, HashAlgorithmName.SHA384), CancellationToken.None);
+            var s2 = await provider.SignDigestAsync(new(digest512, HashAlgorithmName.SHA512), CancellationToken.None);
+            var s3 = await provider.SignDigestAsync(new(digest256, HashAlgorithmName.SHA256), CancellationToken.None);
+            await Assert.That(s1.Length).IsGreaterThan(0);
+            await Assert.That(s2.Length).IsGreaterThan(0);
+            await Assert.That(s3.Length).IsGreaterThan(0);
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Verifies <see cref="SslComESignerProvider"/> RSA SHA-384/512 algorithm OIDs and configuration validation errors.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task SslComESignerProvider_CoversRsaAlgorithmsAndValidationErrors()
+    {
+        var tempDir = Directory.CreateTempSubdirectory("safesign-sslcom-rsa-");
+        try
+        {
+            using var rsa = RSA.Create(RsaKeySize);
+            using var rsaCert = CreateSelfSignedRsaCertificate(rsa);
+            var rsaCertPath = Path.Combine(tempDir.FullName, "sslcom-rsa.pem");
+            await File.WriteAllTextAsync(rsaCertPath, rsaCert.ExportCertificatePem());
+
+            var digest384 = SHA384.HashData("SSL.com RSA384"u8);
+            var digest512 = SHA512.HashData("SSL.com RSA512"u8);
+            var digest256 = SHA256.HashData("SSL.com RSA256"u8);
+            var sigBase64 = Convert.ToBase64String(rsa.SignHash(digest256, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+            var accessToken = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
+
+            using var http = new StubHttp
+            {
+                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+            };
+
+            var rsaProvider = new SslComESignerProvider(
+                new(SslComRsaCredentialId, rsaCertPath, AccessToken: accessToken, Otp: "654321"),
+                new(http.ToSettings(), TimeProvider.System));
+            _ = await rsaProvider.SignDigestAsync(new(digest384, HashAlgorithmName.SHA384), CancellationToken.None);
+            _ = await rsaProvider.SignDigestAsync(new(digest512, HashAlgorithmName.SHA512), CancellationToken.None);
+            _ = await Assert.ThrowsAsync<NotSupportedException>(
+                async () => _ = await rsaProvider.SignDigestAsync(new(digest256, HashAlgorithmName.SHA1), CancellationToken.None));
+
+            var noCredsProvider = new SslComESignerProvider(
+                new(SslComRsaCredentialId, rsaCertPath, Otp: "654321"),
+                new(http.ToSettings(), TimeProvider.System));
+            _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+                async () => _ = await noCredsProvider.SignDigestAsync(new(digest256, HashAlgorithmName.SHA256), CancellationToken.None));
+
+            var noSadProvider = new SslComESignerProvider(
+                new(SslComRsaCredentialId, rsaCertPath, AccessToken: accessToken),
+                new(http.ToSettings(), TimeProvider.System));
+            _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+                async () => _ = await noSadProvider.SignDigestAsync(new(digest256, HashAlgorithmName.SHA256), CancellationToken.None));
+
+            _ = Assert.Throws<ProviderConfigurationException>(
+                static () => _ = ProviderSettingsReader.Require(new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), static _ => null), "missing-opt"));
         }
         finally
         {

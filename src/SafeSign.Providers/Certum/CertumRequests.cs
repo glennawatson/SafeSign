@@ -2,9 +2,11 @@
 // Glenn Watson and Contributors licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for full license information.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -155,35 +157,23 @@ public static class CertumRequests
         var cardsBody = await RunTaskAsync(api, options, token, initialCards, time, cancellationToken).ConfigureAwait(false);
 
         var cards = DeserializeJson(cardsBody, CertumJsonContext.Default.CertumCardInfoArray, "POST /card/v1/cards/tasks");
-        var serial = SelectCardSerial(cards, options.CardSerial);
-
-        var initialCerts = await ProviderRetry.ExecuteHttpAsync(
-            async ct =>
-            {
-                using var emptyJson = ProviderHttp.Bytes([], "application/json");
-                return await api.StartListCertificatesTaskAsync(serial, authorization, emptyJson, ct).ConfigureAwait(false);
-            },
-            options.RetryOptions,
-            time,
-            cancellationToken).ConfigureAwait(false);
-        var certMultipartBody = await RunTaskAsync(api, options, token, initialCerts, time, cancellationToken).ConfigureAwait(false);
-
-        var certificatePem = CertumMultipart.ExtractCertificatePart(certMultipartBody);
-        var certificates = CertificateFile.Read(certificatePem);
-        if (options.AdditionalCertificatesPath is { Length: > 0 } chainPath)
+        var serials = GetCandidateCardSerials(cards, options.CardSerial);
+        if (options.CertificateFingerprint is not { Length: > 0 } expectedFingerprint)
         {
-            if (!File.Exists(chainPath))
-            {
-                throw new ProviderConfigurationException($"Certum certificate chain file '{chainPath}' does not exist.");
-            }
-
-            var chainBytes = await File.ReadAllBytesAsync(chainPath, cancellationToken).ConfigureAwait(false);
-            certificates.AddRange(CertificateFile.Read(chainBytes));
+            return await MaterializeSingleCardAsync(api, http, options, token, serials[0], time, cancellationToken).ConfigureAwait(false);
         }
 
-        CertumIntermediateCertificates.TryAddMatchingIntermediate(certificates);
-        var signingCertificate = CertificateChainOrder.Arrange(certificates, $"Certum card '{serial}'");
-        return new(serial, certificatePem, signingCertificate);
+        foreach (var serial in serials)
+        {
+            var card = await MaterializeSingleCardAsync(api, http, options, token, serial, time, cancellationToken).ConfigureAwait(false);
+            if (MatchesCertificateFingerprint(card.SigningCertificate.Certificate, expectedFingerprint))
+            {
+                return card;
+            }
+        }
+
+        throw new ProviderConfigurationException(
+            $"No Certum SimplySign card certificate matched the configured fingerprint '{expectedFingerprint}'.");
     }
 
     /// <summary>Signs a digest on the SimplySign cloud HSM using the SCS1_ATOM signature task endpoint.</summary>
@@ -333,7 +323,6 @@ public static class CertumRequests
     /// <param name="options">The Certum options.</param>
     /// <param name="time">The clock.</param>
     /// <returns>The 6-digit OTP string.</returns>
-    /// <exception cref="ProviderConfigurationException">Neither TOTP secret nor OTP code was configured.</exception>
     private static string ResolveOtpCode(CertumOptions options, TimeProvider time)
     {
         if (options.TotpSecret is { Length: > 0 } secret)
@@ -341,12 +330,10 @@ public static class CertumRequests
             return CertumTotp.Parse(secret).GenerateCode(time.GetUtcNow());
         }
 
-        if (options.OtpCode is { Length: > 0 } otpCode)
-        {
-            return otpCode;
-        }
-
-        throw new ProviderConfigurationException("Certum SimplySign login requires either TotpSecret or OtpCode.");
+        var otpCode = options.OtpCode!;
+        return otpCode.StartsWith("otpauth://", StringComparison.OrdinalIgnoreCase)
+            ? CertumTotp.Parse(otpCode).GenerateCode(time.GetUtcNow())
+            : otpCode;
     }
 
     /// <summary>Creates a source-generated <see cref="ICertumCloudSignApi"/> client.</summary>
@@ -727,13 +714,7 @@ public static class CertumRequests
 
         try
         {
-            var parsed = JsonSerializer.Deserialize(trimmed, CertumJsonContext.Default.CertumTaskStatus);
-            if (parsed is null)
-            {
-                return false;
-            }
-
-            status = parsed;
+            status = JsonSerializer.Deserialize(trimmed, CertumJsonContext.Default.CertumTaskStatus)!;
             return true;
         }
         catch (JsonException)
@@ -757,13 +738,62 @@ public static class CertumRequests
         return resolved.PathAndQuery.TrimStart('/');
     }
 
-    /// <summary>Selects the desired card serial from the card list.</summary>
+    /// <summary>Fetches and arranges the certificate chain for a single card serial.</summary>
+    /// <param name="api">The Certum Refit client.</param>
+    /// <param name="http">The Refit transport settings.</param>
+    /// <param name="options">The Certum options.</param>
+    /// <param name="token">The bearer access token.</param>
+    /// <param name="serial">The card serial number.</param>
+    /// <param name="time">The clock.</param>
+    /// <param name="cancellationToken">Cancels the HTTP requests.</param>
+    /// <returns>The materialized card and certificate chain.</returns>
+    /// <exception cref="ProviderConfigurationException">The configured additional certificate chain file does not exist.</exception>
+    private static async ValueTask<CertumMaterializedCard> MaterializeSingleCardAsync(
+        ICertumCloudSignApi api,
+        RefitSettings http,
+        CertumOptions options,
+        string token,
+        string serial,
+        TimeProvider time,
+        CancellationToken cancellationToken)
+    {
+        var authorization = ProviderHttp.Bearer(token);
+        var initialCerts = await ProviderRetry.ExecuteHttpAsync(
+            async ct =>
+            {
+                using var emptyJson = ProviderHttp.Bytes([], "application/json");
+                return await api.StartListCertificatesTaskAsync(serial, authorization, emptyJson, ct).ConfigureAwait(false);
+            },
+            options.RetryOptions,
+            time,
+            cancellationToken).ConfigureAwait(false);
+        var certMultipartBody = await RunTaskAsync(api, options, token, initialCerts, time, cancellationToken).ConfigureAwait(false);
+
+        var certificatePem = CertumMultipart.ExtractCertificatePart(certMultipartBody);
+        var certificates = CertificateFile.Read(certificatePem);
+        if (options.AdditionalCertificatesPath is { Length: > 0 } chainPath)
+        {
+            if (!File.Exists(chainPath))
+            {
+                throw new ProviderConfigurationException($"Certum certificate chain file '{chainPath}' does not exist.");
+            }
+
+            var chainBytes = await File.ReadAllBytesAsync(chainPath, cancellationToken).ConfigureAwait(false);
+            certificates.AddRange(CertificateFile.Read(chainBytes));
+        }
+
+        await CertumIntermediateCertificates.TryAddMatchingIntermediatesAsync(http, certificates, cancellationToken).ConfigureAwait(false);
+        var signingCertificate = CertificateChainOrder.Arrange(certificates, $"Certum card '{serial}'");
+        return new(serial, certificatePem, signingCertificate);
+    }
+
+    /// <summary>Returns the candidate card serials to inspect from the card list.</summary>
     /// <param name="cards">The cards returned by SimplySign.</param>
     /// <param name="requestedSerial">The optional serial requested by the caller.</param>
-    /// <returns>The selected card serial.</returns>
+    /// <returns>The non-empty list of candidate card serials.</returns>
     /// <exception cref="ProviderConfigurationException">The requested card serial was not found.</exception>
     /// <exception cref="ProviderRequestException">No cards or valid card serials were returned.</exception>
-    private static string SelectCardSerial(CertumCardInfo[] cards, string? requestedSerial)
+    private static List<string> GetCandidateCardSerials(CertumCardInfo[] cards, string? requestedSerial)
     {
         if (cards.Length == 0)
         {
@@ -776,22 +806,54 @@ public static class CertumRequests
             {
                 if (string.Equals(card.CardNumber, requestedSerial, StringComparison.OrdinalIgnoreCase))
                 {
-                    return card.CardNumber!;
+                    return [card.CardNumber!];
                 }
             }
 
             throw new ProviderConfigurationException($"Certum SimplySign card '{requestedSerial}' was not found on the account.");
         }
 
+        List<string> serials = [with(capacity: cards.Length)];
         foreach (var card in cards)
         {
             if (card.CardNumber is { Length: > 0 } serial)
             {
-                return serial;
+                serials.Add(serial);
             }
         }
 
-        throw new ProviderRequestException("Certum SimplySign card list did not contain a valid 'cardno'.");
+        return serials.Count > 0
+            ? serials
+            : throw new ProviderRequestException("Certum SimplySign card list did not contain a valid 'cardno'.");
+    }
+
+    /// <summary>Checks whether <paramref name="certificate"/> matches the expected SHA-256 or SHA-1 hex fingerprint.</summary>
+    /// <param name="certificate">The leaf certificate to inspect.</param>
+    /// <param name="expectedFingerprint">The hex fingerprint (with or without colons, dashes, or spaces).</param>
+    /// <returns>True when the certificate hash matches <paramref name="expectedFingerprint"/>.</returns>
+    /// <exception cref="ProviderConfigurationException"><paramref name="expectedFingerprint"/> is not valid hexadecimal.</exception>
+    [SuppressMessage("Security", "CA5350:Do Not Use Weak Cryptographic Algorithms", Justification = "Supports optional 40-hex SHA-1 certificate thumbprint matching.")]
+    private static bool MatchesCertificateFingerprint(X509Certificate2 certificate, string expectedFingerprint)
+    {
+        var normalized = expectedFingerprint
+            .Replace(":", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Trim();
+        byte[] expectedBytes;
+        try
+        {
+            expectedBytes = Convert.FromHexString(normalized);
+        }
+        catch (FormatException ex)
+        {
+            throw new ProviderConfigurationException($"Certum certificate fingerprint '{expectedFingerprint}' is not valid hexadecimal.", ex);
+        }
+
+        var actualHash = expectedBytes.Length == SHA1.HashSizeInBytes
+            ? certificate.GetCertHash(HashAlgorithmName.SHA1)
+            : certificate.GetCertHash(HashAlgorithmName.SHA256);
+        return CryptographicOperations.FixedTimeEquals(expectedBytes, actualHash);
     }
 
     /// <summary>Looks up a digest in a signature dictionary using constant-time byte comparison and decodes its hex signature.</summary>

@@ -12,8 +12,10 @@ using SafeSign.Providers.DigiCert;
 using SafeSign.Providers.EncryptionConsulting;
 using SafeSign.Providers.Fortanix;
 using SafeSign.Providers.GaraSign;
+using SafeSign.Providers.Shared;
 using SafeSign.Providers.SignPath;
 using SafeSign.Providers.Venafi;
+using SafeSign.Signing;
 
 namespace SafeSign.Providers.Tests;
 
@@ -32,6 +34,18 @@ public sealed class EnterpriseProviderTests
 
     /// <summary>The expected total GaraSign HTTP requests (authenticate + keystore + initial sign + poll sign).</summary>
     private const int ExpectedTotalGaraSignRequests = 4;
+
+    /// <summary>The synthetic CSC v1 endpoint URL.</summary>
+    private const string CscEndpointUrl = "https://csc.example.com/csc/v1";
+
+    /// <summary>The synthetic CSC v1 authorize route.</summary>
+    private const string CscAuthorizeRoute = "/csc/v1/credentials/authorize";
+
+    /// <summary>The synthetic CSC v1 signHash route.</summary>
+    private const string CscSignHashRoute = "/csc/v1/signatures/signHash";
+
+    /// <summary>The synthetic CSC credential identifier.</summary>
+    private const string CscTestCredentialId = "cred-99";
 
     /// <summary>Verifies that <see cref="DigiCertKeyLockerProvider"/> resolves a certificate by alias and signs a SHA-256 digest.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
@@ -248,17 +262,17 @@ public sealed class EnterpriseProviderTests
                 Reply.Json($$$"""{"cert":{"certificates":["{{{certBase64}}}"]}}""")
             },
             {
-                Route.Post("/csc/v1/credentials/authorize"),
+                Route.Post(CscAuthorizeRoute),
                 Reply.Json("""{"SAD":"csc-sad-token"}""")
             },
             {
-                Route.Post("/csc/v1/signatures/signHash"),
+                Route.Post(CscSignHashRoute),
                 Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""")
             },
         };
 
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
-        var options = new CscOptions(new Uri("https://csc.example.com/csc/v1"), "cred-42", token) { Pin = "1234" };
+        var options = new CscOptions(new Uri(CscEndpointUrl), "cred-42", token) { Pin = "1234" };
         var provider = new CscProvider(http.ToSettings(), options, TimeProvider.System);
 
         var signingCert = await provider.GetCertificateAsync(CancellationToken.None);
@@ -266,6 +280,94 @@ public sealed class EnterpriseProviderTests
 
         var signature = await provider.SignDigestAsync(new(digest, HashAlgorithmName.SHA256), CancellationToken.None);
         await Assert.That(CryptographicOperations.FixedTimeEquals(signature, expectedSig)).IsTrue();
+    }
+
+    /// <summary>Verifies <see cref="CscOptions.FromSettings"/> and <see cref="CscProvider.SignAlgoOid"/>.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CscProvider_CoversSettingsAndSignAlgoOids()
+    {
+        var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
+        Dictionary<string, string> opts = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["endpoint"] = CscEndpointUrl,
+            ["credential-id"] = CscTestCredentialId,
+            ["access-token"] = token,
+            ["otp-uri"] = "otpauth://totp/CSC:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+        };
+        var settings = new ProviderSettings(opts, static _ => null);
+        var parsed = CscOptions.FromSettings(settings);
+        await Assert.That(parsed.CredentialId).IsEqualTo(CscTestCredentialId);
+        await Assert.That(parsed.TotpSecret).Contains("otpauth://");
+        await Assert.That(parsed.ToString()).Contains("CscOptions");
+
+        await Assert.That(CscProvider.SignAlgoOid(PublicKeyKind.Rsa, HashAlgorithmName.SHA256)).IsEqualTo("1.2.840.113549.1.1.11");
+        await Assert.That(CscProvider.SignAlgoOid(PublicKeyKind.Rsa, HashAlgorithmName.SHA384)).IsEqualTo("1.2.840.113549.1.1.12");
+        await Assert.That(CscProvider.SignAlgoOid(PublicKeyKind.Rsa, HashAlgorithmName.SHA512)).IsEqualTo("1.2.840.113549.1.1.13");
+        await Assert.That(CscProvider.SignAlgoOid(PublicKeyKind.Ecdsa, HashAlgorithmName.SHA256)).IsEqualTo("1.2.840.10045.4.3.2");
+        await Assert.That(CscProvider.SignAlgoOid(PublicKeyKind.Ecdsa, HashAlgorithmName.SHA384)).IsEqualTo("1.2.840.10045.4.3.3");
+        await Assert.That(CscProvider.SignAlgoOid(PublicKeyKind.Ecdsa, HashAlgorithmName.SHA512)).IsEqualTo("1.2.840.10045.4.3.4");
+        _ = Assert.Throws<NotSupportedException>(static () => _ = CscProvider.SignAlgoOid(PublicKeyKind.Rsa, HashAlgorithmName.SHA1));
+    }
+
+    /// <summary>Verifies <see cref="CscProvider"/> TOTP/OTP resolution, local certificate loading, and empty credential error branches.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CscProvider_CoversTotpOtpAndLocalCertificate()
+    {
+        var tempDir = Directory.CreateTempSubdirectory("safesign-csc-");
+        try
+        {
+            using var rsa = RSA.Create(RsaKeySize);
+            using var cert = CreateSelfSignedRsaCertificate(rsa);
+            var tempCertFile = Path.Combine(tempDir.FullName, "csc.pem");
+            await File.WriteAllTextAsync(tempCertFile, cert.ExportCertificatePem());
+            var digest = SHA256.HashData("CSC TOTP payload"u8);
+            var expectedSig = rsa.SignHash(digest, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            var sigBase64 = Convert.ToBase64String(expectedSig);
+            var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
+            var endpoint = new Uri(CscEndpointUrl);
+
+            using var http = new StubHttp
+            {
+                { Route.Post(CscAuthorizeRoute), Reply.Json("""{"SAD":"sad-totp"}""") },
+                { Route.Post(CscSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(CscAuthorizeRoute), Reply.Json("""{"SAD":"sad-otp-uri"}""") },
+                { Route.Post(CscSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(CscAuthorizeRoute), Reply.Json("""{"SAD":"sad-plain-otp"}""") },
+                { Route.Post(CscSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post("/csc/v1/credentials/info"), Reply.Json("""{"cert":{"certificates":[]}}""") },
+            };
+
+            var totpProvider = new CscProvider(
+                http.ToSettings(),
+                new CscOptions(endpoint, CscTestCredentialId, token) { CertificateFile = tempCertFile, TotpSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" },
+                TimeProvider.System);
+            await Assert.That(totpProvider.Name).IsEqualTo("csc");
+            var sig1 = await totpProvider.SignDigestAsync(new(digest, HashAlgorithmName.SHA256), CancellationToken.None);
+            await Assert.That(CryptographicOperations.FixedTimeEquals(sig1, expectedSig)).IsTrue();
+
+            var otpUriProvider = new CscProvider(
+                http.ToSettings(),
+                new CscOptions(endpoint, CscTestCredentialId, token) { CertificateFile = tempCertFile, Otp = "otpauth://totp/CSC:user?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" },
+                TimeProvider.System);
+            var sig2 = await otpUriProvider.SignDigestAsync(new(digest, HashAlgorithmName.SHA256), CancellationToken.None);
+            await Assert.That(CryptographicOperations.FixedTimeEquals(sig2, expectedSig)).IsTrue();
+
+            var plainOtpProvider = new CscProvider(
+                http.ToSettings(),
+                new CscOptions(endpoint, CscTestCredentialId, token) { CertificateFile = tempCertFile, Otp = "123456" },
+                TimeProvider.System);
+            var sig3 = await plainOtpProvider.SignDigestAsync(new(digest, HashAlgorithmName.SHA256), CancellationToken.None);
+            await Assert.That(CryptographicOperations.FixedTimeEquals(sig3, expectedSig)).IsTrue();
+
+            var emptyInfoProvider = new CscProvider(http.ToSettings(), new CscOptions(endpoint, CscTestCredentialId, token), TimeProvider.System);
+            _ = await Assert.ThrowsAsync<ProviderRequestException>(async () => _ = await emptyInfoProvider.GetCertificateAsync(CancellationToken.None));
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
     }
 
     /// <summary>Verifies that <see cref="VenafiProvider"/> authenticates via OAuth, queries <c>getobjects</c>, and signs an RSA DigestInfo via <c>vedhsm/api/sign</c>.</summary>

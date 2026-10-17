@@ -25,6 +25,9 @@ public sealed record CscOptions(Uri Endpoint, string CredentialId, string Access
     /// <summary>Gets an optional one-time password for <c>credentials/authorize</c>.</summary>
     public string? Otp { get; init; }
 
+    /// <summary>Gets an optional RFC 6238 TOTP Base32 secret or <c>otpauth://</c> URI used to generate the <c>credentials/authorize</c> OTP.</summary>
+    public string? TotpSecret { get; init; }
+
     /// <summary>Reads <see cref="CscOptions"/> from <c>--provider-option</c> key/value pairs and environment variables.</summary>
     /// <param name="settings">The provider settings.</param>
     /// <returns>The parsed options.</returns>
@@ -41,6 +44,7 @@ public sealed record CscOptions(Uri Endpoint, string CredentialId, string Access
             Sad = ProviderSettingsReader.Find(settings, "sad", "CSC_SAD"),
             Pin = ProviderSettingsReader.Find(settings, "pin", "CSC_PIN"),
             Otp = ProviderSettingsReader.Find(settings, "otp", "CSC_OTP"),
+            TotpSecret = ProviderSettingsReader.Find(settings, "totp-secret", "otp-uri", "CSC_TOTP_SECRET", "CSC_OTP_URI"),
         };
     }
 

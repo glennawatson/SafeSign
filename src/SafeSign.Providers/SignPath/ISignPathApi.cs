@@ -16,7 +16,7 @@ public interface ISignPathApi
     /// <returns>The signing policies reply.</returns>
     [Get("/{**path}")]
     Task<IApiResponse<SignPathPoliciesReply>> GetSigningPoliciesAsync(
-        [Query(Format = "U")] string path,
+        string path,
         [Header("Authorization")] string authorization,
         CancellationToken cancellationToken);
 
@@ -32,7 +32,7 @@ public interface ISignPathApi
     [Multipart]
     [Post("/{**path}")]
     Task<IApiResponse<SignPathSignReply>> SignAsync(
-        [Query(Format = "U")] string path,
+        string path,
         [Header("Authorization")] string authorization,
         [AliasAs("ProjectSlug")] string projectSlug,
         [AliasAs("SigningPolicySlug")] string signingPolicySlug,

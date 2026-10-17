@@ -131,7 +131,19 @@ public sealed class CertumTotp
     /// <param name="input">The <c>otpauth://</c> URI or Base32 secret.</param>
     /// <returns>The parsed <see cref="CertumTotp"/> generator.</returns>
     /// <exception cref="ProviderConfigurationException">The input is malformed or carries no valid Base32 secret.</exception>
-    public static CertumTotp Parse(string input)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static CertumTotp Parse(string input) =>
+        Parse(input, CertumTotpAlgorithm.Sha256);
+
+    /// <summary>
+    /// Parses either a full <c>otpauth://totp/...</c> URI or a bare RFC 4648 Base32 secret string,
+    /// using <paramref name="defaultAlgorithm"/> when no <c>algorithm</c> query parameter is present.
+    /// </summary>
+    /// <param name="input">The <c>otpauth://</c> URI or Base32 secret.</param>
+    /// <param name="defaultAlgorithm">The default HMAC algorithm when not specified in <paramref name="input"/>.</param>
+    /// <returns>The parsed <see cref="CertumTotp"/> generator.</returns>
+    /// <exception cref="ProviderConfigurationException">The input is malformed or carries no valid Base32 secret.</exception>
+    public static CertumTotp Parse(string input, CertumTotpAlgorithm defaultAlgorithm)
     {
         if (string.IsNullOrWhiteSpace(input))
         {
@@ -140,8 +152,8 @@ public sealed class CertumTotp
 
         var trimmed = input.Trim();
         return trimmed.StartsWith("otpauth://", StringComparison.OrdinalIgnoreCase)
-            ? ParseOtpAuthUri(trimmed)
-            : new(DecodeBase32(trimmed));
+            ? ParseOtpAuthUri(trimmed, defaultAlgorithm)
+            : new(DecodeBase32(trimmed), defaultAlgorithm, MinDigits, DefaultPeriodSeconds);
     }
 
     /// <summary>Decodes an RFC 4648 Base32 string, ignoring whitespace and <c>=</c> padding.</summary>
@@ -220,11 +232,12 @@ public sealed class CertumTotp
 
     /// <summary>Parses an <c>otpauth://</c> URI into a <see cref="CertumTotp"/> instance.</summary>
     /// <param name="uri">The trimmed URI string.</param>
+    /// <param name="defaultAlgorithm">The default HMAC algorithm when the URI omits <c>algorithm</c>.</param>
     /// <returns>The parsed <see cref="CertumTotp"/>.</returns>
     /// <exception cref="ProviderConfigurationException">The URI is missing a secret or has invalid parameters.</exception>
-    private static CertumTotp ParseOtpAuthUri(string uri)
+    private static CertumTotp ParseOtpAuthUri(string uri, CertumTotpAlgorithm defaultAlgorithm)
     {
-        var algorithm = CertumTotpAlgorithm.Sha256;
+        var algorithm = defaultAlgorithm;
         var digits = MinDigits;
         var periodSeconds = DefaultPeriodSeconds;
         var secretBase32 = string.Empty;

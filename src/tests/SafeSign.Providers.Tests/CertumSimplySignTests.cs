@@ -37,6 +37,45 @@ public sealed class CertumSimplySignTests
     /// <summary>The CAS login route path.</summary>
     private const string LoginRoute = "/idp/login";
 
+    /// <summary>The SCS1_ATOM list-cards task route path.</summary>
+    private const string CardsTasksRoute = "/card/v1/cards/tasks";
+
+    /// <summary>The SCS1_ATOM list-certificates route for card C-1.</summary>
+    private const string CardC1CertTasksRoute = "/card/v1/cards/C-1/certificates/tasks";
+
+    /// <summary>A single-card JSON array payload for card C-1.</summary>
+    private const string SingleCardC1Json = "[{\"cardno\":\"C-1\"}]";
+
+    /// <summary>The HTML hidden input field name for CAS flow execution.</summary>
+    private const string ExecutionFieldName = "execution";
+
+    /// <summary>The expected 7-digit TOTP length.</summary>
+    private const int SevenTotpDigits = 7;
+
+    /// <summary>The custom 60-second TOTP period.</summary>
+    private const int CustomTotpPeriodSeconds = 60;
+
+    /// <summary>An out-of-range TOTP digit count.</summary>
+    private const int InvalidTotpDigits = 5;
+
+    /// <summary>An out-of-range TOTP algorithm enum value.</summary>
+    private const CertumTotpAlgorithm InvalidTotpAlgorithm = (CertumTotpAlgorithm)99;
+
+    /// <summary>The hex character count of a SHA-256 fingerprint.</summary>
+    private const int Sha256HexLength = 64;
+
+    /// <summary>The hex chunk size for colon-separated fingerprints.</summary>
+    private const int HexByteChunkLength = 2;
+
+    /// <summary>Random byte length for synthetic tokens.</summary>
+    private const int RandomTokenBytes = 16;
+
+    /// <summary>Redirect count exceeding the 20-redirect CAS authorize limit.</summary>
+    private const int ExcessAuthorizeRedirects = 21;
+
+    /// <summary>Poll iteration count reaching the 120-poll SCS1_ATOM limit.</summary>
+    private const int MaxPollIterations = 120;
+
     /// <summary>Verifies RFC 6238 SHA-256 6-digit TOTP generation and <c>otpauth://</c> URI parsing.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
@@ -71,7 +110,7 @@ public sealed class CertumSimplySignTests
         await Assert.That(code).IsEqualTo("119246");
     }
 
-    /// <summary>Verifies <see cref="CertumTotp.Parse"/> supports <c>algorithm=SHA1</c> in <c>otpauth://</c> URIs.</summary>
+    /// <summary>Verifies <see cref="CertumTotp.Parse(string)"/> supports <c>algorithm=SHA1</c> in <c>otpauth://</c> URIs.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
     public async Task CertumTotp_SupportsSha1OtpAuthUri()
@@ -102,7 +141,7 @@ public sealed class CertumSimplySignTests
         await Assert.That(exception.Message).Contains("The provided credentials could not be recognized as valid.");
     }
 
-    /// <summary>Verifies UTF-8 span multipart extraction for certificate PEM payloads.</summary>
+    /// <summary>Verifies UTF-8 span multipart extraction for certificate PEM payloads and error cases.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
     public async Task CertumMultipart_ExtractsNamedPartUsingUtf8Spans()
@@ -128,6 +167,20 @@ public sealed class CertumSimplySignTests
 
         await Assert.That(text).Contains("-----BEGIN CERTIFICATE-----");
         await Assert.That(text).Contains("-----END CERTIFICATE-----");
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            static () =>
+            {
+                _ = CertumMultipart.ExtractCertificatePart("not-a-boundary\n"u8);
+                return Task.CompletedTask;
+            });
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            static () =>
+            {
+                _ = CertumMultipart.ExtractCertificatePart("--b\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nx\r\n--b--\r\n"u8);
+                return Task.CompletedTask;
+            });
+        var tokenReply = new CertumTokenResponse(null, "bearer", ExpectedTotpPeriodSeconds, null);
+        await Assert.That(tokenReply.ToString()).Contains("bearer");
     }
 
     /// <summary>
@@ -148,6 +201,7 @@ public sealed class CertumSimplySignTests
         using var http = new StubHttp();
         AddCasOAuthRoutes(http);
         AddCardAndSignatureRoutes(http, certPemBytes, signatureReplyJson);
+        http.Add(Route.Post("/card/v1/cards/CARD-777/certificates/signature"), Reply.Json(signatureReplyJson));
 
         var options = new CertumOptions
         {
@@ -159,12 +213,374 @@ public sealed class CertumSimplySignTests
         };
 
         var provider = new CertumSimplySignProvider(http.ToSettings(), options, TimeProvider.System);
+        await Assert.That(provider.Name).IsEqualTo("certum");
         var signingCertificate = await provider.GetCertificateAsync(CancellationToken.None);
+        var cachedCertificate = await provider.GetCertificateAsync(CancellationToken.None);
         await Assert.That(signingCertificate.Certificate.Subject).Contains("CN=SafeSign Certum Test");
+        await Assert.That(cachedCertificate.Certificate.Thumbprint).IsEqualTo(signingCertificate.Certificate.Thumbprint);
 
         var signature = await provider.SignDigestAsync(new(payloadDigest, HashAlgorithmName.SHA256), CancellationToken.None);
+        var secondSignature = await provider.SignDigestAsync(new(payloadDigest, HashAlgorithmName.SHA256), CancellationToken.None);
         await Assert.That(rsa.VerifyHash(payloadDigest, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)).IsTrue();
+        await Assert.That(CryptographicOperations.FixedTimeEquals(secondSignature, signature)).IsTrue();
         await http.VerifyAllCalledAsync();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="CertumRequests.MaterializeCardAsync"/> dynamically downloads the issuing
+    /// intermediate CA certificate from the leaf certificate's X.509 Authority Information Access (AIA)
+    /// <c>CA Issuers</c> URI (<c>http://repository.certum.pl/ccsca2021.cer</c>) and stops at the self-signed root CA.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumRequests_MaterializeCardAsync_DownloadsIntermediateCaFromAiaExtensionAndSelectsCardByFingerprint()
+    {
+        var now = TimeProvider.System.GetUtcNow();
+        using var rootRsa = RSA.Create(RsaKeySize);
+        var rootReq = new CertificateRequest("CN=SafeSign Root CA", rootRsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        rootReq.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        using var rootCert = rootReq.CreateSelfSigned(now.AddDays(-1), now.AddYears(1));
+
+        using var intermediateRsa = RSA.Create(RsaKeySize);
+        var intermediateReq = new CertificateRequest("CN=SafeSign Intermediate CA", intermediateRsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        intermediateReq.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        intermediateReq.CertificateExtensions.Add(
+            new X509AuthorityInformationAccessExtension(["http://subca.ocsp-certum.com"], ["http://repository.certum.pl/ctnca2.cer"]));
+        using var intermediatePublic = intermediateReq.Create(rootCert, now.AddDays(-1), now.AddYears(1), [1]);
+        using var intermediateCert = intermediatePublic.CopyWithPrivateKey(intermediateRsa);
+
+        using var otherRsa = RSA.Create(RsaKeySize);
+        using var otherLeaf = CreateCodeSigningCertificate(otherRsa);
+
+        using var leafRsa = RSA.Create(RsaKeySize);
+        var leafReq = new CertificateRequest("CN=SafeSign Aia Leaf", leafRsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        leafReq.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+        leafReq.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
+        leafReq.CertificateExtensions.Add(
+            new X509AuthorityInformationAccessExtension(null, ["ldap://directory.certum.pl/cn=ca", "http://repository.certum.pl/ccsca2021.cer"]));
+        using var leafCert = leafReq.Create(intermediateCert, now.AddDays(-1), now.AddYears(1), [1, 1]);
+
+        var otherPem = Encoding.ASCII.GetBytes(otherLeaf.ExportCertificatePem());
+        var leafPem = Encoding.ASCII.GetBytes(leafCert.ExportCertificatePem());
+        var intermediateAndExtraPem = Encoding.ASCII.GetBytes($"{otherLeaf.ExportCertificatePem()}\n{intermediateCert.ExportCertificatePem()}");
+        var rootDer = rootCert.RawData;
+
+        using var http = new StubHttp
+        {
+            { Route.Post(CardsTasksRoute), Reply.Json("[{\"cardno\":\"CARD-1\"},{\"cardno\":\"CARD-2\"}]") },
+            { Route.Post("/card/v1/cards/CARD-1/certificates/tasks"), Reply.From((_, _) => Task.FromResult(CreateCertificateMultipartResponse(otherPem))) },
+            { Route.Post("/card/v1/cards/CARD-2/certificates/tasks"), Reply.From((_, _) => Task.FromResult(CreateCertificateMultipartResponse(leafPem))) },
+            { Route.Get("/ccsca2021.cer"), Reply.From((_, _) => Task.FromResult(CreateBinaryResponse(intermediateAndExtraPem))) },
+            { Route.Get("/ctnca2.cer"), Reply.From((_, _) => Task.FromResult(CreateBinaryResponse(rootDer))) },
+        };
+
+        var sha256HexWithColons = string.Join(':', Convert.ToHexString(leafCert.GetCertHash(HashAlgorithmName.SHA256)).Chunk(HexByteChunkLength).Select(static c => new string(c)));
+        var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomTokenBytes));
+        var options = new CertumOptions { AccessToken = token, CertificateFingerprint = sha256HexWithColons, RetryOptions = ProviderRetryOptions.FastTest };
+
+        var materialized = await CertumRequests.MaterializeCardAsync(http.ToSettings(), options, token, TimeProvider.System, CancellationToken.None);
+
+        await Assert.That(materialized.Serial).IsEqualTo("CARD-2");
+        await Assert.That(materialized.SigningCertificate.Certificate.Subject).Contains("CN=SafeSign Aia Leaf");
+        await Assert.That(materialized.SigningCertificate.Chain.Length).IsEqualTo(1);
+        await Assert.That(materialized.SigningCertificate.Chain[0].Subject).Contains("CN=SafeSign Intermediate CA");
+    }
+
+    /// <summary>Verifies <see cref="CertumIntermediateCertificates"/> edge cases when AIA is absent, non-HTTP, empty, or returns 404.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumIntermediateCertificates_HandlesEmptyListsAndFailedOrEmptyAiaResponses()
+    {
+        var now = TimeProvider.System.GetUtcNow();
+        using var rootRsa = RSA.Create(RsaKeySize);
+        var rootReq = new CertificateRequest("CN=SafeSign Root 2", rootRsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        rootReq.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        using var rootCert = rootReq.CreateSelfSigned(now.AddDays(-1), now.AddYears(1));
+
+        using var leafRsa = RSA.Create(RsaKeySize);
+        var leafNoHttpAiaReq = new CertificateRequest("CN=Leaf No Http AIA", leafRsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        leafNoHttpAiaReq.CertificateExtensions.Add(
+            new X509AuthorityInformationAccessExtension(null, ["ldap://directory.example.com/ca"]));
+        using var leafNoHttpAia = leafNoHttpAiaReq.Create(rootCert, now.AddDays(-1), now.AddYears(1), [1]);
+
+        var leafHttpAiaReq = new CertificateRequest("CN=Leaf Http AIA", leafRsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        leafHttpAiaReq.CertificateExtensions.Add(
+            new X509AuthorityInformationAccessExtension(null, ["https://repository.certum.pl/missing.cer"]));
+        using var leafHttpAia = leafHttpAiaReq.Create(rootCert, now.AddDays(-1), now.AddYears(1), [1, 1]);
+
+        using var http = new StubHttp
+        {
+            { Route.Get("/missing.cer"), Reply.Status(HttpStatusCode.NotFound) },
+            { Route.Get("/missing.cer"), Reply.From(static (_, _) => Task.FromResult(CreateBinaryResponse([]))) },
+        };
+
+        List<X509Certificate2> empty = [];
+        await CertumIntermediateCertificates.TryAddMatchingIntermediatesAsync(http.ToSettings(), empty, CancellationToken.None);
+        await Assert.That(empty.Count).IsEqualTo(0);
+
+        List<X509Certificate2> nonHttpList = [leafNoHttpAia];
+        await CertumIntermediateCertificates.TryAddMatchingIntermediatesAsync(http.ToSettings(), nonHttpList, CancellationToken.None);
+        await Assert.That(nonHttpList.Count).IsEqualTo(1);
+
+        List<X509Certificate2> notFoundList = [leafHttpAia];
+        await CertumIntermediateCertificates.TryAddMatchingIntermediatesAsync(http.ToSettings(), notFoundList, CancellationToken.None);
+        await Assert.That(notFoundList.Count).IsEqualTo(1);
+
+        List<X509Certificate2> emptyBodyList = [leafHttpAia];
+        await CertumIntermediateCertificates.TryAddMatchingIntermediatesAsync(http.ToSettings(), emptyBodyList, CancellationToken.None);
+        await Assert.That(emptyBodyList.Count).IsEqualTo(1);
+    }
+
+    /// <summary>Verifies <see cref="CertumTotp"/> validation, 7-digit/8-digit SHA-512 codes, lowercase Base32, and error branches.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumTotp_CoversAlgorithmsDigitLengthsAndValidationErrors()
+    {
+        var secretBytes = CertumTotp.DecodeBase32("gezdgnbvgy3tqojq=== ");
+        var defaultTotp = new CertumTotp(secretBytes);
+        await Assert.That(defaultTotp.Algorithm).IsEqualTo(CertumTotpAlgorithm.Sha256);
+
+        var sha512Seven = CertumTotp.Parse("otpauth://totp/Test?flag&secret=gezdgnbvgy3tqojq&algorithm=SHA512&digits=7&period=60");
+        await Assert.That(sha512Seven.Algorithm).IsEqualTo(CertumTotpAlgorithm.Sha512);
+        await Assert.That(sha512Seven.Digits).IsEqualTo(SevenTotpDigits);
+        await Assert.That(sha512Seven.PeriodSeconds).IsEqualTo(CustomTotpPeriodSeconds);
+        await Assert.That(sha512Seven.GenerateCode(Rfc6238TestSeconds).Length).IsEqualTo(SevenTotpDigits);
+
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = new CertumTotp([]));
+        _ = Assert.Throws<ProviderConfigurationException>(() => _ = new CertumTotp(secretBytes, CertumTotpAlgorithm.Sha256, InvalidTotpDigits, ExpectedTotpPeriodSeconds));
+        _ = Assert.Throws<ProviderConfigurationException>(() => _ = new CertumTotp(secretBytes, CertumTotpAlgorithm.Sha256, ExpectedTotpDigits, 0));
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = CertumTotp.Parse("   "));
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = CertumTotp.Parse("otpauth://totp/Test?algorithm=SHA256"));
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = CertumTotp.Parse("otpauth://totp/Test?secret=GEZD&algorithm=MD5"));
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = CertumTotp.Parse("otpauth://totp/Test?secret=GEZD&digits=abc"));
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = CertumTotp.Parse("==== "));
+        _ = Assert.Throws<ProviderConfigurationException>(static () => _ = CertumTotp.Parse("INVALID!CHAR"));
+
+        var invalidAlgoTotp = new CertumTotp(secretBytes, InvalidTotpAlgorithm, ExpectedTotpDigits, ExpectedTotpPeriodSeconds);
+        _ = Assert.Throws<InvalidOperationException>(() => _ = invalidAlgoTotp.GenerateCode(Rfc6238TestSeconds));
+    }
+
+    /// <summary>
+    /// Verifies <see cref="CertumOptions"/> validation, <see cref="CertumRequests.DigestType"/>,
+    /// <see cref="CertumRequests.ExtractHiddenInputValue"/>, and <see cref="CertumRequests.ExtractCasErrorMessage"/>.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumRequests_HelpersAndOptionsCoverAllBranches()
+    {
+        var emptySettings = new ProviderSettings(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), static _ => null);
+        _ = Assert.Throws<ProviderConfigurationException>(() => _ = CertumOptions.FromSettings(emptySettings));
+
+        var opt = new CertumOptions { Email = "a@b.c", CardSerial = "C1" };
+        await Assert.That(opt.ToString()).Contains("CertumOptions");
+
+        await Assert.That(CertumRequests.DigestType(HashAlgorithmName.SHA256)).IsEqualTo("SHA256");
+        await Assert.That(CertumRequests.DigestType(HashAlgorithmName.SHA384)).IsEqualTo("SHA384");
+        await Assert.That(CertumRequests.DigestType(HashAlgorithmName.SHA512)).IsEqualTo("SHA512");
+        _ = Assert.Throws<NotSupportedException>(static () => _ = CertumRequests.DigestType(HashAlgorithmName.SHA1));
+
+        await Assert.That(CertumRequests.ExtractHiddenInputValue("no inputs here", ExecutionFieldName)).IsNull();
+        await Assert.That(CertumRequests.ExtractHiddenInputValue("<input name=\"execution\" unclosed", ExecutionFieldName)).IsNull();
+        await Assert.That(CertumRequests.ExtractHiddenInputValue("<input name=unquoted value='v1' /><input name='execution' value='e2s2'>", ExecutionFieldName)).IsEqualTo("e2s2");
+        await Assert.That(CertumRequests.ExtractHiddenInputValue("<input name=\"other\" value=\"1\">", ExecutionFieldName)).IsNull();
+
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("   ")).IsNull();
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("<html><head><title>CAS - Failure</title></head></html>")).IsEqualTo("CAS - Failure");
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("Plain error body")).IsEqualTo("Plain error body");
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("<div class=\"ds-form-message--error\">no span</div><title>   </title>")).IsNull();
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("<div class=\"ds-form-message--error\"><span unclosed")).IsNull();
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("<title>unclosed")).IsNull();
+        await Assert.That(CertumRequests.ExtractCasErrorMessage("<div class=\"ds-form-message--error\"><span>   </span></div>")).IsNull();
+
+        var digest = SHA256.HashData("test"u8);
+        var digestHex = Convert.ToHexStringLower(digest);
+        _ = Assert.Throws<ProviderRequestException>(() => _ = CertumRequests.ParseSignatureResponse("[{\"not-hex\":\"00\",\"0000\":\"11\"}]"u8, digest));
+        _ = Assert.Throws<ProviderRequestException>(() => _ = CertumRequests.ParseSignatureResponse(Encoding.UTF8.GetBytes($"[{{\"{digestHex}\":\"zz-not-hex\"}}]"), digest));
+        _ = Assert.Throws<ProviderRequestException>(() => _ = CertumRequests.ParseSignatureResponse("null"u8, digest));
+        _ = Assert.Throws<ProviderRequestException>(() => _ = CertumRequests.ParseSignatureResponse("not-json"u8, digest));
+    }
+
+    /// <summary>Verifies <see cref="CertumRequests"/> token acquisition and card materialization validation and error branches.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumRequests_AcquireTokenAndMaterializeCard_CoverValidationErrors()
+    {
+        using var http = new StubHttp();
+        var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomTokenBytes));
+        var direct = await CertumRequests.AcquireTokenAsync(
+            http.ToSettings(),
+            new CertumOptions { AccessToken = token },
+            TimeProvider.System,
+            CancellationToken.None);
+        await Assert.That(direct.Value).IsEqualTo(token);
+
+        _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+            async () => _ = await CertumRequests.AcquireTokenAsync(http.ToSettings(), new(), TimeProvider.System, CancellationToken.None));
+        _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+            async () => _ = await CertumRequests.AcquireTokenAsync(http.ToSettings(), new() { Email = "a@b.c" }, TimeProvider.System, CancellationToken.None));
+
+        using var rsa = RSA.Create(RsaKeySize);
+        using var cert = CreateCodeSigningCertificate(rsa);
+        var certPemBytes = Encoding.ASCII.GetBytes(cert.ExportCertificatePem());
+
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json("[]"));
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new(), token, TimeProvider.System, CancellationToken.None));
+
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json("[{\"cardno\":\"\"}]"));
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new(), token, TimeProvider.System, CancellationToken.None));
+
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json(SingleCardC1Json));
+        _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new() { CardSerial = "MISSING" }, token, TimeProvider.System, CancellationToken.None));
+
+        var missingChainOpts = new CertumOptions { AdditionalCertificatesPath = "/nonexistent/certum-chain.pem" };
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json(SingleCardC1Json));
+        http.Add(Route.Post(CardC1CertTasksRoute), Reply.From((_, _) => Task.FromResult(CreateCertificateMultipartResponse(certPemBytes))));
+        _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), missingChainOpts, token, TimeProvider.System, CancellationToken.None));
+
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json(SingleCardC1Json));
+        http.Add(Route.Post(CardC1CertTasksRoute), Reply.From((_, _) => Task.FromResult(CreateCertificateMultipartResponse(certPemBytes))));
+        _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new() { CertificateFingerprint = "not-hex!" }, token, TimeProvider.System, CancellationToken.None));
+
+        var zeroFingerprintOpts = new CertumOptions { CertificateFingerprint = new('0', Sha256HexLength) };
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json(SingleCardC1Json));
+        http.Add(Route.Post(CardC1CertTasksRoute), Reply.From((_, _) => Task.FromResult(CreateCertificateMultipartResponse(certPemBytes))));
+        _ = await Assert.ThrowsAsync<ProviderConfigurationException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), zeroFingerprintOpts, token, TimeProvider.System, CancellationToken.None));
+    }
+
+    /// <summary>Verifies <see cref="CertumRequests.MaterializeCardAsync"/> task failures, SHA-1 thumbprint matching, and additional certificate chain loading.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumRequests_MaterializeCard_CoversTaskFailuresAndSha1Thumbprint()
+    {
+        var tempDir = Directory.CreateTempSubdirectory("safesign-certum-chain-");
+        try
+        {
+            using var http = new StubHttp();
+            using var rsa = RSA.Create(RsaKeySize);
+            using var cert = CreateCodeSigningCertificate(rsa);
+            var certPemBytes = Encoding.ASCII.GetBytes(cert.ExportCertificatePem());
+            var sha1Hex = Convert.ToHexStringLower(cert.GetCertHash(HashAlgorithmName.SHA1));
+            var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomTokenBytes));
+            var tempChain = Path.Combine(tempDir.FullName, "chain.pem");
+            await File.WriteAllBytesAsync(tempChain, certPemBytes);
+
+            http.Add(Route.Post(CardsTasksRoute), Reply.Json("{\"state\":\"failed\"}", HttpStatusCode.OK));
+            _ = await Assert.ThrowsAsync<ProviderRequestException>(
+                async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new(), token, TimeProvider.System, CancellationToken.None));
+
+            http.Add(Route.Post(CardsTasksRoute), Reply.Status(HttpStatusCode.BadRequest));
+            _ = await Assert.ThrowsAsync<ProviderRequestException>(
+                async () => _ = await CertumRequests.MaterializeCardAsync(
+                    http.ToSettings(),
+                    new() { RetryOptions = ProviderRetryOptions.FastTest },
+                    token,
+                    TimeProvider.System,
+                    CancellationToken.None));
+
+            http.Add(Route.Post(CardsTasksRoute), Reply.Json("{\"atom:link\":\"card/v1/cards/tasks/t-sha1\"}"));
+            http.Add(Route.Get("/card/v1/cards/tasks/t-sha1"), Reply.Json(SingleCardC1Json));
+            http.Add(Route.Post(CardC1CertTasksRoute), Reply.From((_, _) => Task.FromResult(CreateCertificateMultipartResponse(certPemBytes))));
+            var cardSha1 = await CertumRequests.MaterializeCardAsync(
+                http.ToSettings(),
+                new() { CardSerial = "C-1", CertificateFingerprint = sha1Hex, AdditionalCertificatesPath = tempChain, RetryOptions = ProviderRetryOptions.FastTest },
+                token,
+                TimeProvider.System,
+                CancellationToken.None);
+            await Assert.That(cardSha1.Serial).IsEqualTo("C-1");
+
+            http.Add(Route.Post(CardsTasksRoute), Reply.Json("{\"state\":\"done\"}"));
+            _ = await Assert.ThrowsAsync<ProviderRequestException>(
+                async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new(), token, TimeProvider.System, CancellationToken.None));
+
+            http.Add(Route.Post(CardsTasksRoute), Reply.Text("{not-valid-json"));
+            _ = await Assert.ThrowsAsync<ProviderRequestException>(
+                async () => _ = await CertumRequests.MaterializeCardAsync(http.ToSettings(), new(), token, TimeProvider.System, CancellationToken.None));
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>Verifies CAS OAuth login with <see cref="CertumOptions.OtpCode"/> (<c>otpauth://</c> and literal), queryless redirects, and max redirect/poll limits.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumRequests_LoginWithCas_CoversOtpCodeAndRedirectBranches()
+    {
+        using var http = new StubHttp
+        {
+            { Route.Get(AuthorizeRoute), Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse("https://cloudsign.webnotarius.pl/idp/login", "MalformedCookie"))) },
+            {
+                Route.Get(LoginRoute),
+                Reply.From(static (_, _) => Task.FromResult(CreateHtmlResponse(HttpStatusCode.OK, "<form><input name=><input name=unquoted name=\"execution\" value=\"e1\" /></form>"u8)))
+            },
+            { Route.Post(LoginRoute), Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse("/idp/step2"))) },
+            { Route.Get("/idp/step2"), Reply.From(static (_, _) => Task.FromResult(CreateRequestUriOkResponse("https://cloudsign.webnotarius.pl/redirect?code=OC-FROM-REQ"))) },
+            { Route.Post("/idp/" + "oauth2.0/accessToken"), Reply.Json("{\"access_token\":\"AT-1\"}") },
+        };
+
+        var otpUriOpts = new CertumOptions
+        {
+            Email = "otpuri@example.com",
+            OtpCode = $"otpauth://totp/Certum:otpuri@example.com?secret={Rfc6238Sha256Base32Secret}",
+            RetryOptions = ProviderRetryOptions.FastTest,
+        };
+        var tok1 = await CertumRequests.AcquireTokenAsync(http.ToSettings(), otpUriOpts, TimeProvider.System, CancellationToken.None);
+        await Assert.That(tok1.Value).IsEqualTo("AT-1");
+
+        http.Add(
+            Route.Get(AuthorizeRoute),
+            Reply.From(static (_, _) => Task.FromResult(CreateHtmlResponse(HttpStatusCode.OK, "<form><input name=unquoted name=\"execution\" value=\"e1\" /></form>"u8))));
+        http.Add(Route.Post(LoginRoute), Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse("https://cloudsign.webnotarius.pl/redirect?code=OC-2"))));
+        http.Add(Route.Post("/idp/" + "oauth2.0/accessToken"), Reply.Json("{}"));
+
+        var plainOtpOpts = new CertumOptions { Email = "plainotp@example.com", OtpCode = "123456", RetryOptions = ProviderRetryOptions.FastTest };
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            async () => _ = await CertumRequests.AcquireTokenAsync(http.ToSettings(), plainOtpOpts, TimeProvider.System, CancellationToken.None));
+
+        for (var i = 0; i < ExcessAuthorizeRedirects; i++)
+        {
+            http.Add(Route.Get(AuthorizeRoute), Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse(AuthorizeRoute))));
+        }
+
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            async () => _ = await CertumRequests.AcquireTokenAsync(http.ToSettings(), plainOtpOpts, TimeProvider.System, CancellationToken.None));
+
+        http.Add(Route.Post(CardsTasksRoute), Reply.Json("{\"atom:link\":\"/card/v1/cards/tasks/loop\"}"));
+        for (var i = 0; i < MaxPollIterations; i++)
+        {
+            http.Add(Route.Get("/card/v1/cards/tasks/loop"), Reply.Json("{\"atom:link\":\"/card/v1/cards/tasks/loop\"}"));
+        }
+
+        _ = await Assert.ThrowsAsync<ProviderRequestException>(
+            async () => _ = await CertumRequests.MaterializeCardAsync(
+                http.ToSettings(),
+                new() { TaskPollDelay = TimeSpan.Zero, RetryOptions = ProviderRetryOptions.FastTest },
+                tok1.Value,
+                TimeProvider.System,
+                CancellationToken.None));
+    }
+
+    /// <summary>Creates an HTTP 200 OK response with a populated <see cref="HttpResponseMessage.RequestMessage"/> URI.</summary>
+    /// <param name="requestUri">The request URI string.</param>
+    /// <returns>The constructed HTTP response.</returns>
+    private static HttpResponseMessage CreateRequestUriOkResponse(string requestUri) =>
+        new(HttpStatusCode.OK) { RequestMessage = new(HttpMethod.Get, requestUri), Content = new StringContent(string.Empty) };
+
+    /// <summary>Creates a binary <see cref="HttpResponseMessage"/> with status 200 OK.</summary>
+    /// <param name="bytes">The binary payload.</param>
+    /// <returns>The constructed HTTP response.</returns>
+    private static HttpResponseMessage CreateBinaryResponse(byte[] bytes)
+    {
+        var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new("application/pkix-cert");
+        return new(HttpStatusCode.OK) { Content = content };
     }
 
     /// <summary>Registers a failing CAS OAuth 2.0 login sequence returning <c>401 Unauthorized</c> on <paramref name="http"/>.</summary>
@@ -255,7 +671,7 @@ public sealed class CertumSimplySignTests
     private static HttpResponseMessage CreateRedirectResponse(string location, params string[] setCookies)
     {
         var response = new HttpResponseMessage(HttpStatusCode.Found);
-        response.Headers.Location = new(location);
+        response.Headers.Location = new(location, UriKind.RelativeOrAbsolute);
         foreach (var cookie in setCookies)
         {
             response.Headers.Add("Set-Cookie", cookie);
