@@ -40,11 +40,10 @@ public static class ProviderHttp
     {
         ArgumentNullException.ThrowIfNull(context);
         var serializer = new SystemTextJsonContentSerializer(context.Options);
-        var handlerFactory = baseSettings?.HttpMessageHandlerFactory;
-        if (handlerFactory is null && clientCertFile is { Length: > 0 })
-        {
-            handlerFactory = () => CreateClientCertificateHandler(clientCertFile, clientCertPassword);
-        }
+        var handlerFactory = baseSettings?.HttpMessageHandlerFactory
+            ?? (clientCertFile is { Length: > 0 }
+                ? () => CreateClientCertificateHandler(clientCertFile, clientCertPassword)
+                : static () => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         return new(serializer) { UrlResolution = UrlResolutionMode.Rfc3986, HttpMessageHandlerFactory = handlerFactory };
     }
@@ -187,7 +186,7 @@ public static class ProviderHttp
             clientCertFile,
             clientCertPassword,
             X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
-        var handler = new SocketsHttpHandler();
+        var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
         handler.SslOptions.ClientCertificates = [cert];
         return handler;
     }

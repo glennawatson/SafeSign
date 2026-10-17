@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using Refit;
 using SafeSign.Formats;
 using SafeSign.Providers;
+using SafeSign.Providers.Shared;
 using SafeSign.Signing;
 using SafeSign.Signing.Cms;
 
@@ -53,7 +54,8 @@ public static class SignRunner
             return ExitFailure;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException
-            or FileNotFoundException or CryptographicException or HttpRequestException or ApiException)
+            or FileNotFoundException or CryptographicException or HttpRequestException or ApiException
+            or ProviderConfigurationException or ProviderRequestException)
         {
             await error.WriteLineAsync($"error: {ex.Message}".AsMemory(), CancellationToken.None).ConfigureAwait(false);
             return ExitFailure;
