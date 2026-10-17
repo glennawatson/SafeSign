@@ -45,7 +45,7 @@ jobs:
         ref: ${{ inputs.sourceRef }}
         fetch-depth: 0
     - name: Setup .NET Environment
-      uses: glennawatson/actions-common/.github/actions/dotnet-environment@main
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         dotnet-versions: |
           10.0.x
@@ -55,7 +55,7 @@ jobs:
         stamp-version: 'false'
     - name: Resolve built commit SHA
       id: sourcesha
-      uses: glennawatson/actions-common/.github/actions/run-csharp@main
+      uses: glennawatson/actions-common/.github/actions/run-csharp@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         shared-script: resolve-built-commit-sha-c775df1621.cs
     - name: Validate version inputs
@@ -63,13 +63,13 @@ jobs:
         BUMP: ${{ inputs.bump }}
         PRE_RELEASE: ${{ inputs.preRelease }}
         VERSION_OVERRIDE: ${{ inputs.versionOverride }}
-      uses: glennawatson/actions-common/.github/actions/run-csharp@main
+      uses: glennawatson/actions-common/.github/actions/run-csharp@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         shared-script: validate-version-inputs-a975ecb49d.cs
     - name: Compute version and tag
       if: inputs.bump != '(pick one)' && inputs.versionOverride == ''
       id: bump
-      uses: glennawatson/actions-common/.github/actions/compute-version-and-tag@main
+      uses: glennawatson/actions-common/.github/actions/compute-version-and-tag@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         bump: ${{ inputs.bump }}
         tag-prefix: 'v'
@@ -81,22 +81,22 @@ jobs:
         BUMP_TAG: ${{ steps.bump.outputs.tag }}
         BUMP_PRERELEASE: ${{ steps.bump.outputs.prerelease }}
         VERSION_OVERRIDE: ${{ inputs.versionOverride }}
-      uses: glennawatson/actions-common/.github/actions/run-csharp@main
+      uses: glennawatson/actions-common/.github/actions/run-csharp@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         shared-script: resolve-release-tag-de4aae5558.cs
     - name: Stamp version with MinVer
       id: minver
-      uses: glennawatson/actions-common/.github/actions/minver@main
+      uses: glennawatson/actions-common/.github/actions/minver@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         tag-prefix: 'v'
         auto-increment: 'minor'
         version-override: ${{ inputs.versionOverride != '' && inputs.versionOverride || steps.bump.outputs.version }}
     - name: Build
-      uses: glennawatson/actions-common/.github/actions/dotnet-build@main
+      uses: glennawatson/actions-common/.github/actions/dotnet-build@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         solution-file: SafeSign.slnx
     - name: Pack NuGet packages
-      uses: glennawatson/actions-common/.github/actions/run-command@main
+      uses: glennawatson/actions-common/.github/actions/run-command@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         command: dotnet
         arguments: |-
@@ -135,7 +135,7 @@ jobs:
         ref: ${{ inputs.sourceRef }}
         fetch-depth: 0
     - name: Setup .NET Environment
-      uses: glennawatson/actions-common/.github/actions/dotnet-environment@main
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         dotnet-versions: |
           10.0.x
@@ -144,7 +144,7 @@ jobs:
         minver-auto-increment: 'minor'
         stamp-version: 'false'
     - name: Publish Native AOT (net11.0)
-      uses: glennawatson/actions-common/.github/actions/run-command@main
+      uses: glennawatson/actions-common/.github/actions/run-command@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         command: dotnet
         arguments: |-
@@ -197,7 +197,7 @@ jobs:
         name: aot-win-x64
         path: aot/win-x64
     - name: Mark SafeSign Linux Native AOT executable
-      uses: glennawatson/actions-common/.github/actions/run-command@main
+      uses: glennawatson/actions-common/.github/actions/run-command@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         command: chmod
         arguments: |-
@@ -205,7 +205,7 @@ jobs:
           aot/linux-x64/SafeSign
         working-directory: .
     - name: Dogfood SafeSign to sign NuGet packages and Windows Native AOT executable with Certum SimplySign
-      uses: glennawatson/actions-common/.github/actions/run-command@main
+      uses: glennawatson/actions-common/.github/actions/run-command@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         command: bash
         arguments: |-
@@ -234,7 +234,7 @@ jobs:
       id-token: write
     steps:
     - name: Setup .NET
-      uses: glennawatson/actions-common/.github/actions/setup-sdk@main
+      uses: glennawatson/actions-common/.github/actions/setup-sdk@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         dotnet-version: 11.0.x
     - name: Download signed packages
@@ -250,7 +250,7 @@ jobs:
     - name: Push to NuGet
       env:
         NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-      uses: glennawatson/actions-common/.github/actions/run-csharp@main
+      uses: glennawatson/actions-common/.github/actions/run-csharp@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         shared-script: push-to-nuget-d58e357f8c.cs
   create-release:
@@ -260,7 +260,7 @@ jobs:
       contents: write
     steps:
     - name: Setup .NET
-      uses: glennawatson/actions-common/.github/actions/setup-sdk@main
+      uses: glennawatson/actions-common/.github/actions/setup-sdk@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         dotnet-version: 11.0.x
     - name: Download signed packages
@@ -281,6 +281,6 @@ jobs:
         TARGET: ${{ needs.build.outputs.sourceSha }}
         TITLE: ${{ needs.build.outputs.semver2 }}
         PRERELEASE: ${{ needs.build.outputs.prerelease }}
-      uses: glennawatson/actions-common/.github/actions/run-csharp@main
+      uses: glennawatson/actions-common/.github/actions/run-csharp@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
       with:
         shared-script: create-github-release-54073718a8.cs
