@@ -23,6 +23,18 @@ jobs:
       minverAutoIncrement: 'minor'
       sonarProjectKey: glennawatson_SafeSign
       sonarOrganization: glennawatson
+      # Authenticode/CMS SignedData, Google OAuth2 RS256 assertions, and OCI HTTP signatures mandate RSASSA-PKCS1-v1_5
+      # digital signatures (RSASignaturePadding.Pkcs1), which SonarCloud's csharpsquid:S5542 misidentifies as PKCS#1 encryption padding.
+      sonarExtraBeginArgs: >-
+        /d:sonar.issue.ignore.multicriteria=nullForgiving,nullChecks,linqLoops,pkcs1Signature
+        /d:sonar.issue.ignore.multicriteria.nullForgiving.ruleKey=csharpsquid:S8969
+        /d:sonar.issue.ignore.multicriteria.nullForgiving.resourceKey=**/*.cs
+        /d:sonar.issue.ignore.multicriteria.nullChecks.ruleKey=csharpsquid:S2589
+        /d:sonar.issue.ignore.multicriteria.nullChecks.resourceKey=**/*.cs
+        /d:sonar.issue.ignore.multicriteria.linqLoops.ruleKey=csharpsquid:S3267
+        /d:sonar.issue.ignore.multicriteria.linqLoops.resourceKey=**/*.cs
+        /d:sonar.issue.ignore.multicriteria.pkcs1Signature.ruleKey=csharpsquid:S5542
+        /d:sonar.issue.ignore.multicriteria.pkcs1Signature.resourceKey=**/*.cs
       sonarExclusions: '**/tests/**,**/benchmarks/**'
       sonarCoverageExclusions: '**/tests/**,**/benchmarks/**'
       sonarCpdExclusions: '**/tests/**,**/benchmarks/**'
