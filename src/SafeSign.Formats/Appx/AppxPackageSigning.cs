@@ -32,6 +32,36 @@ public static class AppxPackageSigning
     /// <summary>The ZIP End of Central Directory (EOCD) signature (<c>0x06054B50</c>).</summary>
     private const uint EocdSignature = 0x06054B50U;
 
+    /// <summary>The Zip64 End of Central Directory record signature (<c>0x06064B50</c>).</summary>
+    private const uint Zip64EocdSignature = 0x06064B50U;
+
+    /// <summary>The Zip64 End of Central Directory locator signature (<c>0x07064B50</c>).</summary>
+    private const uint Zip64LocatorSignature = 0x07064B50U;
+
+    /// <summary>The sentinel 32-bit value (<c>0xFFFFFFFF</c>) indicating a Zip64 field override.</summary>
+    private const uint Zip64Sentinel32 = 0xFFFFFFFFU;
+
+    /// <summary>The sentinel 16-bit value (<c>0xFFFF</c>) indicating a Zip64 field override.</summary>
+    private const ushort Zip64Sentinel16 = 0xFFFF;
+
+    /// <summary>The byte length of a Zip64 End of Central Directory locator record.</summary>
+    private const int Zip64LocatorLength = 20;
+
+    /// <summary>The offset of the Zip64 EOCD offset field inside the Zip64 EOCD locator.</summary>
+    private const int Zip64LocatorEocdOffsetField = 8;
+
+    /// <summary>The offset of the disk entry count in a Zip64 EOCD record.</summary>
+    private const int Zip64EocdDiskEntriesOffset = 24;
+
+    /// <summary>The offset of the total entry count in a Zip64 EOCD record.</summary>
+    private const int Zip64EocdTotalEntriesOffset = 32;
+
+    /// <summary>The offset of the central directory byte size in a Zip64 EOCD record.</summary>
+    private const int Zip64EocdCentralDirSizeOffset = 40;
+
+    /// <summary>The offset of the central directory start offset in a Zip64 EOCD record.</summary>
+    private const int Zip64EocdCentralDirOffsetOffset = 48;
+
     /// <summary>The ZIP Central Directory File Header signature (<c>0x02014B50</c>).</summary>
     private const uint CentralHeaderSignature = 0x02014B50U;
 
@@ -188,9 +218,7 @@ public static class AppxPackageSigning
     private static byte[] PrepareUnsignedZip(ReadOnlySpan<byte> zip, out bool isBundle)
     {
         var current = RemoveEntryIfPresent(zip, SignatureEntryName);
-        var eocdOffset = FindEocdOffset(current);
-        var centralSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(current.AsSpan(eocdOffset + EocdCentralDirSizeOffset));
-        var centralOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(current.AsSpan(eocdOffset + EocdCentralDirOffsetOffset));
+        var (centralOffset, centralSize, _, _, _) = LocateCentralDirectory(current);
         var centralDir = current.AsSpan(centralOffset, centralSize);
 
         _ = ReadUncompressedPart(current, centralDir, BlockMapEntryName, required: true);
@@ -223,9 +251,7 @@ public static class AppxPackageSigning
     /// <exception cref="InvalidDataException">The ZIP central directory or required APPX parts could not be located.</exception>
     private static byte[] ComputeAppxCompositeDigest(ReadOnlySpan<byte> zip, HashAlgorithmName algorithm)
     {
-        var eocdOffset = FindEocdOffset(zip);
-        var centralSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirSizeOffset)..]);
-        var centralOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirOffsetOffset)..]);
+        var (centralOffset, centralSize, _, _, _) = LocateCentralDirectory(zip);
         var centralDir = zip.Slice(centralOffset, centralSize);
 
         var axpcDigest = CryptographicOperations.HashData(algorithm, zip[..centralOffset]);
@@ -336,9 +362,7 @@ public static class AppxPackageSigning
     /// <returns>The ZIP archive bytes without <paramref name="targetEntryName"/>.</returns>
     private static byte[] RemoveEntryIfPresent(ReadOnlySpan<byte> zip, string targetEntryName)
     {
-        var eocdOffset = FindEocdOffset(zip);
-        var centralSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirSizeOffset)..]);
-        var centralOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirOffsetOffset)..]);
+        var (centralOffset, centralSize, trailerOffset, eocdOffset, isZip64) = LocateCentralDirectory(zip);
         var centralDir = zip.Slice(centralOffset, centralSize);
 
         var (targetCentralStart, targetCentralLength, targetLocalStart, targetLocalEnd, totalEntries) =
@@ -351,8 +375,8 @@ public static class AppxPackageSigning
         var removedLocalLength = targetLocalEnd - targetLocalStart;
         var newCentralOffset = centralOffset - removedLocalLength;
         var newCentralSize = centralSize - targetCentralLength;
-        var eocdSlice = zip[eocdOffset..];
-        var output = new byte[newCentralOffset + newCentralSize + eocdSlice.Length];
+        var trailerSlice = zip[trailerOffset..];
+        var output = new byte[newCentralOffset + newCentralSize + trailerSlice.Length];
 
         zip[..targetLocalStart].CopyTo(output);
         zip[targetLocalEnd..centralOffset].CopyTo(output.AsSpan(targetLocalStart));
@@ -362,13 +386,9 @@ public static class AppxPackageSigning
         updatedCentral.AsSpan(0, targetCentralStart).CopyTo(output.AsSpan(newCentralOffset));
         updatedCentral.AsSpan(targetCentralStart + targetCentralLength).CopyTo(output.AsSpan(newCentralOffset + targetCentralStart));
 
-        var newEocd = output.AsSpan(newCentralOffset + newCentralSize);
-        eocdSlice.CopyTo(newEocd);
-        var remainingEntries = (ushort)(totalEntries - 1);
-        BinaryPrimitives.WriteUInt16LittleEndian(newEocd[EocdDiskEntriesOffset..], remainingEntries);
-        BinaryPrimitives.WriteUInt16LittleEndian(newEocd[EocdTotalEntriesOffset..], remainingEntries);
-        BinaryPrimitives.WriteUInt32LittleEndian(newEocd[EocdCentralDirSizeOffset..], (uint)newCentralSize);
-        BinaryPrimitives.WriteUInt32LittleEndian(newEocd[EocdCentralDirOffsetOffset..], (uint)newCentralOffset);
+        var newTrailer = output.AsSpan(newCentralOffset + newCentralSize);
+        trailerSlice.CopyTo(newTrailer);
+        WriteUpdatedTrailer(newTrailer, eocdOffset - trailerOffset, isZip64, totalEntries - 1, newCentralSize, newCentralOffset);
         return output;
     }
 
@@ -449,6 +469,82 @@ public static class AppxPackageSigning
         }
     }
 
+    /// <summary>Locates the central directory and EOCD/Zip64 EOCD trailer in <paramref name="zip"/>.</summary>
+    /// <param name="zip">The ZIP archive bytes.</param>
+    /// <returns>The central directory offset, size, trailer start offset, standard EOCD offset, and whether Zip64 EOCD is present.</returns>
+    /// <exception cref="InvalidDataException">The EOCD or Zip64 EOCD record is missing or malformed.</exception>
+    private static (int CentralOffset, int CentralSize, int TrailerOffset, int EocdOffset, bool IsZip64) LocateCentralDirectory(ReadOnlySpan<byte> zip)
+    {
+        var eocdOffset = FindEocdOffset(zip);
+        if (eocdOffset >= Zip64LocatorLength
+            && BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset - Zip64LocatorLength)..]) == Zip64LocatorSignature)
+        {
+            var zip64EocdOffset = (int)BinaryPrimitives.ReadUInt64LittleEndian(zip[(eocdOffset - Zip64LocatorLength + Zip64LocatorEocdOffsetField)..]);
+            if (zip64EocdOffset < 0
+                || zip64EocdOffset > eocdOffset - Zip64LocatorLength
+                || BinaryPrimitives.ReadUInt32LittleEndian(zip[zip64EocdOffset..]) != Zip64EocdSignature)
+            {
+                throw new InvalidDataException("Invalid Zip64 End of Central Directory record.");
+            }
+
+            var centralSize64 = (int)BinaryPrimitives.ReadUInt64LittleEndian(zip[(zip64EocdOffset + Zip64EocdCentralDirSizeOffset)..]);
+            var centralOffset64 = (int)BinaryPrimitives.ReadUInt64LittleEndian(zip[(zip64EocdOffset + Zip64EocdCentralDirOffsetOffset)..]);
+            return (centralOffset64, centralSize64, zip64EocdOffset, eocdOffset, true);
+        }
+
+        var centralSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirSizeOffset)..]);
+        var centralOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirOffsetOffset)..]);
+        return (centralOffset, centralSize, eocdOffset, eocdOffset, false);
+    }
+
+    /// <summary>Updates the Zip64 EOCD, Zip64 Locator, and standard EOCD fields in <paramref name="trailer"/>.</summary>
+    /// <param name="trailer">The mutable trailer slice starting at either the Zip64 EOCD or the standard EOCD.</param>
+    /// <param name="relativeEocdOffset">The offset of the standard EOCD within <paramref name="trailer"/>.</param>
+    /// <param name="isZip64">Whether <paramref name="trailer"/> starts with a Zip64 EOCD record.</param>
+    /// <param name="totalEntries">The updated entry count.</param>
+    /// <param name="centralSize">The updated central directory byte length.</param>
+    /// <param name="centralOffset">The updated central directory start offset.</param>
+    private static void WriteUpdatedTrailer(
+        Span<byte> trailer,
+        int relativeEocdOffset,
+        bool isZip64,
+        int totalEntries,
+        int centralSize,
+        int centralOffset)
+    {
+        if (isZip64)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(trailer[Zip64EocdDiskEntriesOffset..], (ulong)totalEntries);
+            BinaryPrimitives.WriteUInt64LittleEndian(trailer[Zip64EocdTotalEntriesOffset..], (ulong)totalEntries);
+            BinaryPrimitives.WriteUInt64LittleEndian(trailer[Zip64EocdCentralDirSizeOffset..], (ulong)centralSize);
+            BinaryPrimitives.WriteUInt64LittleEndian(trailer[Zip64EocdCentralDirOffsetOffset..], (ulong)centralOffset);
+
+            var locatorSpan = trailer[(relativeEocdOffset - Zip64LocatorLength)..];
+            BinaryPrimitives.WriteUInt64LittleEndian(locatorSpan[Zip64LocatorEocdOffsetField..], (ulong)(centralOffset + centralSize));
+        }
+
+        var eocdSpan = trailer[relativeEocdOffset..];
+        if (!isZip64 || BinaryPrimitives.ReadUInt16LittleEndian(eocdSpan[EocdDiskEntriesOffset..]) != Zip64Sentinel16)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(eocdSpan[EocdDiskEntriesOffset..], (ushort)totalEntries);
+        }
+
+        if (!isZip64 || BinaryPrimitives.ReadUInt16LittleEndian(eocdSpan[EocdTotalEntriesOffset..]) != Zip64Sentinel16)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(eocdSpan[EocdTotalEntriesOffset..], (ushort)totalEntries);
+        }
+
+        if (!isZip64 || BinaryPrimitives.ReadUInt32LittleEndian(eocdSpan[EocdCentralDirSizeOffset..]) != Zip64Sentinel32)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(eocdSpan[EocdCentralDirSizeOffset..], (uint)centralSize);
+        }
+
+        if (!isZip64 || BinaryPrimitives.ReadUInt32LittleEndian(eocdSpan[EocdCentralDirOffsetOffset..]) != Zip64Sentinel32)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(eocdSpan[EocdCentralDirOffsetOffset..], (uint)centralOffset);
+        }
+    }
+
     /// <summary>Finds the offset of the ZIP End of Central Directory record.</summary>
     /// <param name="zip">The ZIP archive bytes.</param>
     /// <returns>The byte offset of the EOCD record.</returns>
@@ -466,13 +562,13 @@ public static class AppxPackageSigning
         throw new InvalidDataException("The package is not a valid ZIP archive (End of Central Directory record not found).");
     }
 
-    /// <summary>Appends <c>AppxSignature.p7x</c> as an uncompressed entry with zeroed external file attributes.</summary>
+    /// <summary>Appends <c>AppxSignature.p7x</c> as a deflated entry with zeroed external file attributes.</summary>
     /// <param name="unsignedZip">The unsigned ZIP archive bytes.</param>
     /// <param name="p7xBytes">The <c>PKCX</c>-prefixed signature bytes.</param>
     /// <returns>The signed ZIP archive bytes.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static byte[] AppendSignatureEntry(byte[] unsignedZip, byte[] p7xBytes) =>
-        AppendZipEntry(unsignedZip, SignatureEntryName, p7xBytes, compress: false);
+        AppendZipEntry(unsignedZip, SignatureEntryName, p7xBytes, compress: true);
 
     /// <summary>Appends a single entry to a ZIP archive at the byte level without modifying existing local file headers.</summary>
     /// <param name="zip">The input ZIP archive bytes.</param>
@@ -482,11 +578,11 @@ public static class AppxPackageSigning
     /// <returns>The updated ZIP archive bytes.</returns>
     private static byte[] AppendZipEntry(ReadOnlySpan<byte> zip, string entryName, ReadOnlySpan<byte> uncompressedData, bool compress)
     {
-        var eocdOffset = FindEocdOffset(zip);
-        var centralCount = BinaryPrimitives.ReadUInt16LittleEndian(zip[(eocdOffset + EocdTotalEntriesOffset)..]);
-        var centralSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirSizeOffset)..]);
-        var centralOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirOffsetOffset)..]);
-        var eocdSlice = zip[eocdOffset..];
+        var (centralOffset, centralSize, trailerOffset, eocdOffset, isZip64) = LocateCentralDirectory(zip);
+        var centralCount = isZip64
+            ? (int)BinaryPrimitives.ReadUInt64LittleEndian(zip[(trailerOffset + Zip64EocdTotalEntriesOffset)..])
+            : BinaryPrimitives.ReadUInt16LittleEndian(zip[(eocdOffset + EocdTotalEntriesOffset)..]);
+        var trailerSlice = zip[trailerOffset..];
 
         var nameBytes = Encoding.UTF8.GetBytes(entryName);
         var crc32 = ZipCrc32.HashToUInt32(uncompressedData);
@@ -500,7 +596,7 @@ public static class AppxPackageSigning
         var newCentralOffset = centralOffset + localEntryLength;
         var newCentralSize = centralSize + centralEntryLength;
 
-        var output = new byte[newCentralOffset + newCentralSize + eocdSlice.Length];
+        var output = new byte[newCentralOffset + newCentralSize + trailerSlice.Length];
         zip[..centralOffset].CopyTo(output);
 
         var localSpan = output.AsSpan(centralOffset, localEntryLength);
@@ -529,13 +625,9 @@ public static class AppxPackageSigning
         BinaryPrimitives.WriteUInt32LittleEndian(centralSpan[CentralLocalHeaderOffset..], (uint)centralOffset);
         nameBytes.CopyTo(centralSpan[CentralHeaderFixedLength..]);
 
-        var newEocd = output.AsSpan(newCentralOffset + newCentralSize);
-        eocdSlice.CopyTo(newEocd);
-        var updatedCount = (ushort)(centralCount + 1);
-        BinaryPrimitives.WriteUInt16LittleEndian(newEocd[EocdDiskEntriesOffset..], updatedCount);
-        BinaryPrimitives.WriteUInt16LittleEndian(newEocd[EocdTotalEntriesOffset..], updatedCount);
-        BinaryPrimitives.WriteUInt32LittleEndian(newEocd[EocdCentralDirSizeOffset..], (uint)newCentralSize);
-        BinaryPrimitives.WriteUInt32LittleEndian(newEocd[EocdCentralDirOffsetOffset..], (uint)newCentralOffset);
+        var newTrailer = output.AsSpan(newCentralOffset + newCentralSize);
+        trailerSlice.CopyTo(newTrailer);
+        WriteUpdatedTrailer(newTrailer, eocdOffset - trailerOffset, isZip64, centralCount + 1, newCentralSize, newCentralOffset);
         return output;
     }
 }
