@@ -79,23 +79,23 @@ public sealed class ScriptFileSigner : IFileFormatSigner
     public static bool TryGetFormat(string extension, out ScriptFormat format)
     {
         ArgumentNullException.ThrowIfNull(extension);
-        (var matched, format) = extension.ToUpperInvariant() switch
+        ScriptFormatMatch match = extension.ToUpperInvariant() switch
         {
-            ".PS1" or ".PSM1" or ".PSD1" => (true, new ScriptFormat(
+            ".PS1" or ".PSM1" or ".PSD1" => new(true, new ScriptFormat(
                 PowerShellSipGuid,
                 PowerShellSipVersion,
                 "# SIG # Begin signature block",
                 "# SIG # End signature block",
                 "# ",
                 string.Empty)),
-            ".PS1XML" or ".CDXML" or ".PSC1" => (true, new ScriptFormat(
+            ".PS1XML" or ".CDXML" or ".PSC1" => new(true, new ScriptFormat(
                 PowerShellSipGuid,
                 PowerShellSipVersion,
                 "<!-- SIG # Begin signature block -->",
                 "<!-- SIG # End signature block -->",
                 "<!-- ",
                 " -->")),
-            ".VBS" or ".VBE" => (true, new ScriptFormat(
+            ".VBS" or ".VBE" => new(true, new ScriptFormat(
                 VbScriptSipGuid,
                 WshSipVersion,
                 "'' SIG '' Begin signature block",
@@ -103,7 +103,7 @@ public sealed class ScriptFileSigner : IFileFormatSigner
                 "'' SIG '' ",
                 string.Empty,
                 IsByteOrderMarkSigned: false)),
-            ".JS" => (true, new ScriptFormat(
+            ".JS" => new(true, new ScriptFormat(
                 JScriptSipGuid,
                 WshSipVersion,
                 "// SIG // Begin signature block",
@@ -111,7 +111,7 @@ public sealed class ScriptFileSigner : IFileFormatSigner
                 "// SIG // ",
                 string.Empty,
                 IsByteOrderMarkSigned: false)),
-            ".WSF" => (true, new ScriptFormat(
+            ".WSF" => new(true, new ScriptFormat(
                 WsfSipGuid,
                 WshSipVersion,
                 "<signature>",
@@ -120,9 +120,10 @@ public sealed class ScriptFileSigner : IFileFormatSigner
                 string.Empty,
                 IsByteOrderMarkSigned: false,
                 InsertionAnchor: "</job>")),
-            _ => (false, default),
+            _ => new(false, default),
         };
-        return matched;
+        format = match.Format;
+        return match.Matched;
     }
 
     /// <summary>Formats and inserts the base64 Authenticode signature block into <paramref name="unsignedScript"/>.</summary>
@@ -254,21 +255,21 @@ public sealed class ScriptFileSigner : IFileFormatSigner
     /// <summary>Detects the text encoding and BOM length of <paramref name="bytes"/>.</summary>
     /// <param name="bytes">The raw file bytes.</param>
     /// <returns>The text encoding and byte order mark length.</returns>
-    private static (Encoding Encoding, int PreambleLength) DetectEncoding(ReadOnlySpan<byte> bytes)
+    private static ScriptEncoding DetectEncoding(ReadOnlySpan<byte> bytes)
     {
         if (bytes.StartsWith(Utf8Bom))
         {
-            return (Utf8NoBom, Utf8BomLength);
+            return new(Utf8NoBom, Utf8BomLength);
         }
 
         if (bytes.StartsWith(Utf16LeBom))
         {
-            return (Utf16LeNoBom, Utf16BomLength);
+            return new(Utf16LeNoBom, Utf16BomLength);
         }
 
         return bytes.StartsWith(Utf16BeBom)
-            ? (Utf16BeNoBom, Utf16BomLength)
-            : (Utf8NoBom, 0);
+            ? new(Utf16BeNoBom, Utf16BomLength)
+            : new(Utf8NoBom, 0);
     }
 
     /// <summary>Strips any existing Authenticode comment signature block while preserving the original unsigned script bytes.</summary>

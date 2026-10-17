@@ -19,10 +19,10 @@ public static class OracleHttpSignature
     /// <param name="pathAndQuery">The request path and query (for example <c>/20180608/sign</c>).</param>
     /// <param name="bodyBytes">The serialized UTF-8 JSON request body.</param>
     /// <param name="now">The current UTC timestamp.</param>
-    /// <returns>A tuple of (<c>DateHeader</c>, <c>ContentSha256Base64</c>, <c>AuthorizationHeader</c>).</returns>
+    /// <returns>The date, body digest, and authorization headers.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="pathAndQuery"/> is null or empty.</exception>
-    public static (string DateHeader, string ContentSha256Base64, string AuthorizationHeader) SignPost(
+    public static OracleHttpSignatureHeaders SignPost(
         OracleCloudKmsOptions options,
         string pathAndQuery,
         ReadOnlySpan<byte> bodyBytes,
@@ -51,6 +51,6 @@ public static class OracleHttpSignature
         var sigBase64 = Convert.ToBase64String(sigBytes);
         var keyId = $"{options.TenancyOcid}/{options.UserOcid}/{options.KeyFingerprint}";
         var authorization = $"Signature version=\"1\",keyId=\"{keyId}\",algorithm=\"rsa-sha256\",headers=\"{SignedHeaders}\",signature=\"{sigBase64}\"";
-        return (dateHeader, contentSha256, authorization);
+        return new(dateHeader, contentSha256, authorization);
     }
 }

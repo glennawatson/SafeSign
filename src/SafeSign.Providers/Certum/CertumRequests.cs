@@ -436,7 +436,7 @@ public static class CertumRequests
     /// <param name="cancellationToken">Cancels the HTTP requests.</param>
     /// <returns>The login HTML and the URI that served it.</returns>
     /// <exception cref="ProviderRequestException">Too many redirects occurred.</exception>
-    private static async ValueTask<(string Html, Uri? LoginUri)> FollowToLoginPageAsync(
+    private static async ValueTask<CertumLoginPage> FollowToLoginPageAsync(
         ICertumCloudSignApi api,
         CertumOptions options,
         HttpResponseMessage initial,
@@ -454,7 +454,7 @@ public static class CertumRequests
                 if (!IsRedirect(current.StatusCode) || current.Headers.Location is not { } location)
                 {
                     var bytes = await ProviderHttp.ReadBytesAsync(current, "GET /idp/login", cancellationToken).ConfigureAwait(false);
-                    return (Encoding.UTF8.GetString(bytes), lastUri ?? current.RequestMessage?.RequestUri);
+                    return new(Encoding.UTF8.GetString(bytes), lastUri ?? current.RequestMessage?.RequestUri);
                 }
 
                 var target = location.IsAbsoluteUri ? location : new Uri(options.Endpoint, location);
@@ -658,7 +658,7 @@ public static class CertumRequests
     /// <param name="cancellationToken">Cancels reading the body.</param>
     /// <returns>The response bytes and an optional next poll descriptor.</returns>
     /// <exception cref="ProviderRequestException">The HTTP status or task state indicates failure.</exception>
-    private static async ValueTask<(byte[] Body, (string Path, TimeSpan? SuggestedDelay)? NextPoll)> InspectTaskResponseAsync(
+    private static async ValueTask<CertumTaskResponse> InspectTaskResponseAsync(
         HttpResponseMessage response,
         Uri baseEndpoint,
         TimeProvider time,
@@ -677,7 +677,7 @@ public static class CertumRequests
         if (mediaType.Contains("multipart", StringComparison.OrdinalIgnoreCase)
             || !TryReadTaskStatus(body, out var taskStatus))
         {
-            return (body, null);
+            return new(body, null);
         }
 
         if (string.Equals(taskStatus.State, "failed", StringComparison.OrdinalIgnoreCase))
@@ -688,30 +688,30 @@ public static class CertumRequests
 
         if (taskStatus.AtomLink is not { Length: > 0 } atomLink)
         {
-            return (body, null);
+            return new(body, null);
         }
 
         var suggestedDelay = taskStatus.PingAfter is { } pingAfter
             ? TimeSpan.FromMilliseconds(pingAfter)
             : ProviderRetry.TryGetRetryAfter(response.Headers, time.GetUtcNow());
-        return (body, (NormalizeTaskPath(baseEndpoint, atomLink), suggestedDelay));
+        return new(body, new CertumPollInstruction(NormalizeTaskPath(baseEndpoint, atomLink), suggestedDelay));
     }
 
     /// <summary>Computes the poll path and fuzzy-jittered delay for the next SCS1_ATOM poll iteration.</summary>
     /// <param name="options">The Certum options.</param>
     /// <param name="pollStep">The path and provider-suggested delay.</param>
     /// <returns>The path and delay.</returns>
-    private static (string Path, TimeSpan Delay) ResolvePollStep(CertumOptions options, (string Path, TimeSpan? SuggestedDelay) pollStep)
+    private static CertumPollStep ResolvePollStep(CertumOptions options, CertumPollInstruction pollStep)
     {
         if (options.TaskPollDelay is { } fixedDelay)
         {
-            return (pollStep.Path, fixedDelay);
+            return new(pollStep.Path, fixedDelay);
         }
 
         var rawMs = pollStep.SuggestedDelay?.TotalMilliseconds ?? MinPollDelayMilliseconds;
         var clampedMs = Math.Clamp(rawMs, MinPollDelayMilliseconds, MaxPollDelayMilliseconds);
         var delay = ProviderRetry.ComputePollDelay(options.RetryOptions, TimeSpan.FromMilliseconds(clampedMs));
-        return (pollStep.Path, delay);
+        return new(pollStep.Path, delay);
     }
 
     /// <summary>Tries to read a JSON body as a <see cref="CertumTaskStatus"/> object when the root JSON token is an object.</summary>

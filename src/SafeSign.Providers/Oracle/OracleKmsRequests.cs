@@ -64,14 +64,14 @@ public static class OracleKmsRequests
         using var response = await ProviderRetry.ExecuteAsync(
             async ct =>
             {
-                var (dateHeader, contentSha256, authorization) = OracleHttpSignature.SignPost(
+                var headers = OracleHttpSignature.SignPost(
                     options,
                     SignPath,
                     bodyBytes,
                     clock.GetUtcNow());
                 using var content = ProviderHttp.Bytes(bodyBytes, "application/json");
                 content.Headers.ContentLength = bodyBytes.Length;
-                return await api.SignAsync(dateHeader, contentSha256, authorization, content, ct).ConfigureAwait(false);
+                return await api.SignAsync(headers.DateHeader, headers.ContentSha256Base64, headers.AuthorizationHeader, content, ct).ConfigureAwait(false);
             },
             retry,
             clock,
@@ -90,7 +90,7 @@ public static class OracleKmsRequests
     /// <returns>The OCI signing algorithm identifier.</returns>
     /// <exception cref="NotSupportedException">The key kind and hash algorithm combination is not supported.</exception>
     private static string MapAlgorithm(PublicKeyKind keyKind, HashAlgorithmName hashAlgorithm) =>
-        (keyKind, hashAlgorithm.Name) switch
+        new ProviderSignatureAlgorithm(keyKind, hashAlgorithm.Name) switch
         {
             (PublicKeyKind.Rsa, "SHA256") => "SHA_256_RSA_PKCS_V1_5",
             (PublicKeyKind.Rsa, "SHA384") => "SHA_384_RSA_PKCS_V1_5",

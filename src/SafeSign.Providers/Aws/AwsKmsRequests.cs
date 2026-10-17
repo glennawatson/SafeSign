@@ -111,7 +111,7 @@ public static class AwsKmsRequests
     /// <param name="hash">The digest algorithm.</param>
     /// <returns>The KMS algorithm name.</returns>
     /// <exception cref="NotSupportedException">The key family and digest algorithm combination is not supported.</exception>
-    public static string SigningAlgorithm(PublicKeyKind kind, HashAlgorithmName hash) => (kind, hash.Name) switch
+    public static string SigningAlgorithm(PublicKeyKind kind, HashAlgorithmName hash) => new ProviderSignatureAlgorithm(kind, hash.Name) switch
     {
         (PublicKeyKind.Rsa, "SHA256") => "RSASSA_PKCS1_V1_5_SHA_256",
         (PublicKeyKind.Rsa, "SHA384") => "RSASSA_PKCS1_V1_5_SHA_384",

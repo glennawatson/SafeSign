@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" />
     <ProjectReference Include="..\SafeSign.Signing\SafeSign.Signing.csproj" />
   </ItemGroup>
 

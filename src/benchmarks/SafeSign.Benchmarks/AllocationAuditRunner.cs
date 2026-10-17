@@ -8,7 +8,7 @@ using System.Text.Json;
 namespace SafeSign.Benchmarks;
 
 /// <summary>
-/// Measures exact thread allocations for every benchmark in <see cref="SafeSignBenchmarks"/> and verifies them
+/// Measures thread allocations for synchronous benchmarks and process-wide allocations for asynchronous benchmarks, then verifies them
 /// against <c>allocations-explained.json</c>. Fails if any benchmark lacks an explanation or exceeds its budget.
 /// </summary>
 public static class AllocationAuditRunner
@@ -40,7 +40,7 @@ public static class AllocationAuditRunner
         ExplainedAllocation[] explained;
         await using (var stream = File.OpenRead(explainedJsonPath))
         {
-            explained = await JsonSerializer.DeserializeAsync(stream, AllocationJsonContext.Default.ExplainedAllocationArray).ConfigureAwait(false) ?? [];
+            explained = await JsonSerializer.DeserializeAsync(stream, AllocationJsonContext.Default.ExplainedAllocationArray, CancellationToken.None).ConfigureAwait(false) ?? [];
         }
 
         var measurements = await MeasureAllAsync().ConfigureAwait(false);
@@ -77,7 +77,7 @@ public static class AllocationAuditRunner
 
     /// <summary>Runs all benchmark operations under <see cref="AllocationProbe"/> and returns their minimum allocations.</summary>
     /// <returns>The measured benchmark names and allocated byte counts.</returns>
-    private static async ValueTask<(string Name, long AllocatedBytes)[]> MeasureAllAsync()
+    private static async ValueTask<BenchmarkAllocation[]> MeasureAllAsync()
     {
         var benchmarks = new SafeSignBenchmarks();
         benchmarks.Setup();
@@ -85,16 +85,16 @@ public static class AllocationAuditRunner
         {
             return
             [
-                (nameof(SafeSignBenchmarks.PeChecksum_64KiB), AllocationProbe.Minimum(() => _ = benchmarks.PeChecksum_64KiB())),
-                (nameof(SafeSignBenchmarks.PeLayoutReader_Read), AllocationProbe.Minimum(() => _ = benchmarks.PeLayoutReader_Read())),
-                (
+                new(nameof(SafeSignBenchmarks.PeChecksum_64KiB), AllocationProbe.Minimum(() => _ = benchmarks.PeChecksum_64KiB())),
+                new(nameof(SafeSignBenchmarks.PeLayoutReader_Read), AllocationProbe.Minimum(() => _ = benchmarks.PeLayoutReader_Read())),
+                new(
                     nameof(SafeSignBenchmarks.PeAuthenticodeDigest_64KiB),
                     await AllocationProbe.MinimumAsync(async () => _ = await benchmarks.PeAuthenticodeDigest_64KiB().ConfigureAwait(false)).ConfigureAwait(false)),
-                (
+                new(
                     nameof(SafeSignBenchmarks.AuthenticodeSignature_Build),
                     await AllocationProbe.MinimumAsync(async () => _ = await benchmarks.AuthenticodeSignature_Build().ConfigureAwait(false)).ConfigureAwait(false)),
-                (nameof(SafeSignBenchmarks.SignPeExecutable_64KiB), await AllocationProbe.MinimumAsync(() => benchmarks.SignPeExecutable_64KiB()).ConfigureAwait(false)),
-                (nameof(SafeSignBenchmarks.SignPowerShellScript), await AllocationProbe.MinimumAsync(() => benchmarks.SignPowerShellScript()).ConfigureAwait(false)),
+                new(nameof(SafeSignBenchmarks.SignPeExecutable_64KiB), await AllocationProbe.MinimumAsync(() => benchmarks.SignPeExecutable_64KiB()).ConfigureAwait(false)),
+                new(nameof(SafeSignBenchmarks.SignPowerShellScript), await AllocationProbe.MinimumAsync(() => benchmarks.SignPowerShellScript()).ConfigureAwait(false)),
             ];
         }
         finally

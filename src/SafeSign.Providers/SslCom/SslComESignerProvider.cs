@@ -89,7 +89,7 @@ public sealed class SslComESignerProvider(
             token,
             keyKind,
             request,
-            (services.Time, _retry),
+            new(services.Time, _retry),
             cancellationToken).ConfigureAwait(false);
     }
 

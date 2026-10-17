@@ -397,7 +397,7 @@ public static class AppxPackageSigning
     /// <param name="centralOffset">The byte offset where the central directory starts.</param>
     /// <param name="targetEntryName">The entry name to locate.</param>
     /// <returns>The central header span, local record span, and total central directory entry count.</returns>
-    private static (int CentralStart, int CentralLength, int LocalStart, int LocalEnd, int TotalEntries) LocateEntryForRemoval(
+    private static AppxEntryRemovalLayout LocateEntryForRemoval(
         ReadOnlySpan<byte> centralDir,
         int centralOffset,
         string targetEntryName)
@@ -431,7 +431,7 @@ public static class AppxPackageSigning
 
         if (targetCentralStart < 0)
         {
-            return (-1, 0, -1, centralOffset, entryOffsets.Count);
+            return new(-1, 0, -1, centralOffset, entryOffsets.Count);
         }
 
         for (var i = 0; i < entryOffsets.Count; i++)
@@ -443,7 +443,7 @@ public static class AppxPackageSigning
             }
         }
 
-        return (targetCentralStart, targetCentralLength, targetLocalStart, targetLocalEnd, entryOffsets.Count);
+        return new(targetCentralStart, targetCentralLength, targetLocalStart, targetLocalEnd, entryOffsets.Count);
     }
 
     /// <summary>Shifts local header offsets in <paramref name="centralDir"/> for entries after <paramref name="removedLocalStart"/>.</summary>
@@ -473,7 +473,7 @@ public static class AppxPackageSigning
     /// <param name="zip">The ZIP archive bytes.</param>
     /// <returns>The central directory offset, size, trailer start offset, standard EOCD offset, and whether Zip64 EOCD is present.</returns>
     /// <exception cref="InvalidDataException">The EOCD or Zip64 EOCD record is missing or malformed.</exception>
-    private static (int CentralOffset, int CentralSize, int TrailerOffset, int EocdOffset, bool IsZip64) LocateCentralDirectory(ReadOnlySpan<byte> zip)
+    private static AppxCentralDirectoryLayout LocateCentralDirectory(ReadOnlySpan<byte> zip)
     {
         var eocdOffset = FindEocdOffset(zip);
         if (eocdOffset >= Zip64LocatorLength
@@ -489,12 +489,12 @@ public static class AppxPackageSigning
 
             var centralSize64 = (int)BinaryPrimitives.ReadUInt64LittleEndian(zip[(zip64EocdOffset + Zip64EocdCentralDirSizeOffset)..]);
             var centralOffset64 = (int)BinaryPrimitives.ReadUInt64LittleEndian(zip[(zip64EocdOffset + Zip64EocdCentralDirOffsetOffset)..]);
-            return (centralOffset64, centralSize64, zip64EocdOffset, eocdOffset, true);
+            return new(centralOffset64, centralSize64, zip64EocdOffset, eocdOffset, true);
         }
 
         var centralSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirSizeOffset)..]);
         var centralOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(zip[(eocdOffset + EocdCentralDirOffsetOffset)..]);
-        return (centralOffset, centralSize, eocdOffset, eocdOffset, false);
+        return new(centralOffset, centralSize, eocdOffset, eocdOffset, false);
     }
 
     /// <summary>Updates the Zip64 EOCD, Zip64 Locator, and standard EOCD fields in <paramref name="trailer"/>.</summary>

@@ -142,7 +142,7 @@ public static class RpmHeaderCodec
     {
         ArgumentNullException.ThrowIfNull(entries);
         var store = new ArrayBufferWriter<byte>();
-        List<(int Tag, int Type, int Offset, int Count)> index = [];
+        List<RpmHeaderIndexEntry> index = [];
         foreach (var (tag, entry) in entries)
         {
             var alignment = entry.Type switch
@@ -155,20 +155,20 @@ public static class RpmHeaderCodec
             var padding = Pad(store.WrittenCount, alignment);
             store.GetSpan(padding)[..padding].Clear();
             store.Advance(padding);
-            index.Add((tag, entry.Type, store.WrittenCount, entry.Count));
+            index.Add(new(tag, entry.Type, store.WrittenCount, entry.Count));
             store.Write(entry.Data.Span);
         }
 
         var regionOffset = store.WrittenCount;
         var total = index.Count + 1;
-        WriteIndexEntry(store.GetSpan(IndexEntryLength), (region, TypeBinary, -(total * IndexEntryLength), IndexEntryLength));
+        WriteIndexEntry(store.GetSpan(IndexEntryLength), new(region, TypeBinary, -(total * IndexEntryLength), IndexEntryLength));
         store.Advance(IndexEntryLength);
 
         var bytes = new byte[IndexEntryLength + (total * IndexEntryLength) + store.WrittenCount];
         HeaderMagic.CopyTo(bytes);
         BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(EntryCountOffset), total);
         BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(StoreLengthOffset), store.WrittenCount);
-        WriteIndexEntry(bytes.AsSpan(IndexEntryLength), (region, TypeBinary, regionOffset, IndexEntryLength));
+        WriteIndexEntry(bytes.AsSpan(IndexEntryLength), new(region, TypeBinary, regionOffset, IndexEntryLength));
         for (var i = 0; i < index.Count; i++)
         {
             WriteIndexEntry(bytes.AsSpan(IndexEntryLength + ((i + 1) * IndexEntryLength)), index[i]);
@@ -232,8 +232,8 @@ public static class RpmHeaderCodec
 
     /// <summary>Writes one big-endian header index entry.</summary>
     /// <param name="target">Receives the 16-byte entry.</param>
-    /// <param name="entry">The index entry tuple.</param>
-    private static void WriteIndexEntry(Span<byte> target, (int Tag, int Type, int Offset, int Count) entry)
+    /// <param name="entry">The index entry fields.</param>
+    private static void WriteIndexEntry(Span<byte> target, RpmHeaderIndexEntry entry)
     {
         BinaryPrimitives.WriteInt32BigEndian(target, entry.Tag);
         BinaryPrimitives.WriteInt32BigEndian(target[TypeOffset..], entry.Type);

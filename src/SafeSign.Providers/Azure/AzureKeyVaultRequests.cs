@@ -132,7 +132,7 @@ public static class AzureKeyVaultRequests
     /// <param name="hash">The digest algorithm.</param>
     /// <returns>The algorithm name.</returns>
     /// <exception cref="NotSupportedException">The combination is not supported.</exception>
-    public static string Algorithm(PublicKeyKind kind, HashAlgorithmName hash) => (kind, hash.Name) switch
+    public static string Algorithm(PublicKeyKind kind, HashAlgorithmName hash) => new ProviderSignatureAlgorithm(kind, hash.Name) switch
     {
         (PublicKeyKind.Rsa, "SHA256") => "RS256",
         (PublicKeyKind.Rsa, "SHA384") => "RS384",

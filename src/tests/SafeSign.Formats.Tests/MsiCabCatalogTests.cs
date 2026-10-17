@@ -85,7 +85,7 @@ public sealed class MsiCabCatalogTests
                     new("\u0005SummaryInformation", default, "MSI summary stream"u8.ToArray(), null),
                     new("Data.cab", default, "Embedded cabinet payload"u8.ToArray(), null),
                 ]);
-            await File.WriteAllBytesAsync(msiPath, CompoundFileWriter.Write(root));
+            await File.WriteAllBytesAsync(msiPath, CompoundFileWriter.Write(root, CancellationToken.None));
 
             var signer = new MsiFileSigner();
             await signer.SignAsync(new(msiPath, msiPath, session), CancellationToken.None);

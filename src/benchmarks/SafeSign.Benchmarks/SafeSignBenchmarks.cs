@@ -93,6 +93,7 @@ public class SafeSignBenchmarks
     [GlobalCleanup]
     public void Cleanup()
     {
+        _provider?.Dispose();
         _provider = null;
         if (_tempDir is { Exists: true })
         {

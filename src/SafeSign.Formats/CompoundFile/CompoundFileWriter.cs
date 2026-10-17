@@ -71,36 +71,38 @@ internal static class CompoundFileWriter
 
     /// <summary>Serializes <paramref name="root"/> into an MS-CFB version 3 compound file byte array.</summary>
     /// <param name="root">The root storage entry.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The compound file bytes.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="root"/> is null.</exception>
     /// <exception cref="InvalidDataException"><paramref name="root"/> is not a storage.</exception>
-    internal static byte[] Write(CompoundFileEntry root)
+    internal static byte[] Write(CompoundFileEntry root, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(root);
+        cancellationToken.ThrowIfCancellationRequested();
         if (root.Children is null)
         {
             throw new InvalidDataException("The compound file root entry must be a storage.");
         }
 
         List<CompoundFileDirectoryRecord> dirRecords = [];
-        List<byte[]> sectorBuffers = [];
+        List<ReadOnlyMemory<byte>> sectorBuffers = [];
         List<uint> fat = [];
         List<uint> miniFat = [];
         List<byte> miniStream = [];
 
-        FlattenTree(root, dirRecords, sectorBuffers, fat, miniFat, miniStream);
+        FlattenTree(root, dirRecords, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
 
         var miniStreamBytes = miniStream.ToArray();
         var rootStartSector = miniStreamBytes.Length > 0
-            ? AppendRegularChain(miniStreamBytes, sectorBuffers, fat)
+            ? AppendRegularChain(miniStreamBytes, sectorBuffers, fat, cancellationToken)
             : CompoundFileFormat.EndOfChain;
 
         var r0 = dirRecords[0];
         dirRecords[0] = r0 with { StartSector = rootStartSector, Size = (ulong)miniStreamBytes.Length };
 
-        var miniFatBytes = EncodeUInt32Table(miniFat, PadCount(miniFat.Count, FatEntriesPerSector));
+        var miniFatBytes = EncodeUInt32Table(miniFat, PadCount(miniFat.Count, FatEntriesPerSector), cancellationToken);
         var firstMiniFatSector = miniFatBytes.Length > 0
-            ? AppendRegularChain(miniFatBytes, sectorBuffers, fat)
+            ? AppendRegularChain(miniFatBytes, sectorBuffers, fat, cancellationToken)
             : CompoundFileFormat.EndOfChain;
         var miniFatSectorCount = (uint)(miniFatBytes.Length / CompoundFileFormat.HeaderSize);
 
@@ -108,18 +110,20 @@ internal static class CompoundFileWriter
         var dirBytes = new byte[paddedDirCount * CompoundFileFormat.DirectoryEntrySize];
         for (var i = 0; i < dirRecords.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var r = dirRecords[i];
             CompoundFileDirectoryParser.Write(dirBytes.AsSpan(i * CompoundFileFormat.DirectoryEntrySize, CompoundFileFormat.DirectoryEntrySize), in r);
         }
 
-        var firstDirSector = AppendRegularChain(dirBytes, sectorBuffers, fat);
-        var fatSectorIndices =AppendFatAndDifatSectors(sectorBuffers, fat, out var firstDifatSector, out var difatSectorCount);
+        var firstDirSector = AppendRegularChain(dirBytes, sectorBuffers, fat, cancellationToken);
+        var fatSectorIndices = AppendFatAndDifatSectors(sectorBuffers, fat, out var firstDifatSector, out var difatSectorCount, cancellationToken);
 
         var output = new byte[(1 + sectorBuffers.Count) * CompoundFileFormat.HeaderSize];
         WriteHeader(output.AsSpan(0, CompoundFileFormat.HeaderSize), firstDirSector, firstMiniFatSector, miniFatSectorCount, firstDifatSector, difatSectorCount, fatSectorIndices);
         for (var i = 0; i < sectorBuffers.Count; i++)
         {
-            sectorBuffers[i].CopyTo(output.AsSpan((i + 1) * CompoundFileFormat.HeaderSize, CompoundFileFormat.HeaderSize));
+            cancellationToken.ThrowIfCancellationRequested();
+            sectorBuffers[i].Span.CopyTo(output.AsSpan((i + 1) * CompoundFileFormat.HeaderSize, CompoundFileFormat.HeaderSize));
         }
 
         return output;
@@ -132,13 +136,15 @@ internal static class CompoundFileWriter
     /// <param name="fat">The regular FAT table.</param>
     /// <param name="miniFat">The mini-FAT table.</param>
     /// <param name="miniStream">The accumulated mini-stream bytes.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     private static void FlattenTree(
         CompoundFileEntry root,
         List<CompoundFileDirectoryRecord> dirRecords,
-        List<byte[]> sectorBuffers,
+        List<ReadOnlyMemory<byte>> sectorBuffers,
         List<uint> fat,
         List<uint> miniFat,
-        List<byte> miniStream)
+        List<byte> miniStream,
+        CancellationToken cancellationToken)
     {
         dirRecords.Add(new(
             root.Name.Length > 0 ? root.Name : "Root Entry",
@@ -150,7 +156,7 @@ internal static class CompoundFileWriter
             CompoundFileFormat.EndOfChain,
             0));
 
-        var rootChild = BuildSubtree(root.Children!, dirRecords, sectorBuffers, fat, miniFat, miniStream);
+        var rootChild = BuildSubtree(root.Children!, dirRecords, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
         var r0 = dirRecords[0];
         dirRecords[0] = r0 with { Child = rootChild };
     }
@@ -162,15 +168,18 @@ internal static class CompoundFileWriter
     /// <param name="fat">The FAT entries.</param>
     /// <param name="miniFat">The mini-FAT entries.</param>
     /// <param name="miniStream">The mini-stream buffer.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The root directory index of the sibling tree, or <see cref="CompoundFileFormat.Free"/> when empty.</returns>
     private static uint BuildSubtree(
         List<CompoundFileEntry> children,
         List<CompoundFileDirectoryRecord> dirRecords,
-        List<byte[]> sectorBuffers,
+        List<ReadOnlyMemory<byte>> sectorBuffers,
         List<uint> fat,
         List<uint> miniFat,
-        List<byte> miniStream)
+        List<byte> miniStream,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (children.Count == 0)
         {
             return CompoundFileFormat.Free;
@@ -178,7 +187,7 @@ internal static class CompoundFileWriter
 
         List<CompoundFileEntry> sorted = [.. children];
         sorted.Sort(static (a, b) => CompoundFileFormat.CompareNames(a.Name, b.Name));
-        return BuildBalancedNode((sorted, 0, sorted.Count - 1), dirRecords, sectorBuffers, fat, miniFat, miniStream);
+        return BuildBalancedNode(new(sorted, 0, sorted.Count - 1), dirRecords, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
     }
 
     /// <summary>Recursively constructs a balanced sibling BST node and its storage children.</summary>
@@ -188,15 +197,18 @@ internal static class CompoundFileWriter
     /// <param name="fat">The FAT entries.</param>
     /// <param name="miniFat">The mini-FAT entries.</param>
     /// <param name="miniStream">The mini-stream buffer.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The directory index of the created node, or <see cref="CompoundFileFormat.Free"/>.</returns>
     private static uint BuildBalancedNode(
-        (List<CompoundFileEntry> Sorted, int Low, int High) range,
+        CompoundFileSiblingRange range,
         List<CompoundFileDirectoryRecord> dirRecords,
-        List<byte[]> sectorBuffers,
+        List<ReadOnlyMemory<byte>> sectorBuffers,
         List<uint> fat,
         List<uint> miniFat,
-        List<byte> miniStream)
+        List<byte> miniStream,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (range.Low > range.High)
         {
             return CompoundFileFormat.Free;
@@ -207,12 +219,12 @@ internal static class CompoundFileWriter
         var myIndex = (uint)dirRecords.Count;
         dirRecords.Add(default);
 
-        var leftIndex = BuildBalancedNode((range.Sorted, range.Low, mid - 1), dirRecords, sectorBuffers, fat, miniFat, miniStream);
-        var rightIndex = BuildBalancedNode((range.Sorted, mid + 1, range.High), dirRecords, sectorBuffers, fat, miniFat, miniStream);
+        var leftIndex = BuildBalancedNode(new(range.Sorted, range.Low, mid - 1), dirRecords, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
+        var rightIndex = BuildBalancedNode(new(range.Sorted, mid + 1, range.High), dirRecords, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
 
         if (entry.Children is { } subChildren)
         {
-            var childIndex = BuildSubtree(subChildren, dirRecords, sectorBuffers, fat, miniFat, miniStream);
+            var childIndex = BuildSubtree(subChildren, dirRecords, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
             dirRecords[(int)myIndex] = new(
                 entry.Name,
                 CompoundFileEntryKind.Storage,
@@ -225,8 +237,8 @@ internal static class CompoundFileWriter
             return myIndex;
         }
 
-        var span = entry.Data.Span;
-        var startSector = AllocateStreamSectors(span, sectorBuffers, fat, miniFat, miniStream);
+        var data = entry.Data;
+        var startSector = AllocateStreamSectors(data, sectorBuffers, fat, miniFat, miniStream, cancellationToken);
 
         dirRecords[(int)myIndex] = new(
             entry.Name,
@@ -236,45 +248,49 @@ internal static class CompoundFileWriter
             CompoundFileFormat.Free,
             entry.Metadata,
             startSector,
-            (ulong)span.Length);
+            (ulong)data.Length);
         return myIndex;
     }
 
     /// <summary>Allocates either mini-sectors or regular sectors for a stream payload.</summary>
-    /// <param name="span">The stream bytes.</param>
+    /// <param name="data">The stream bytes.</param>
     /// <param name="sectorBuffers">The regular sector buffers.</param>
     /// <param name="fat">The regular FAT entries.</param>
     /// <param name="miniFat">The mini-FAT entries.</param>
     /// <param name="miniStream">The mini-stream buffer.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The first sector index, or <see cref="CompoundFileFormat.EndOfChain"/> for empty streams.</returns>
     private static uint AllocateStreamSectors(
-        ReadOnlySpan<byte> span,
-        List<byte[]> sectorBuffers,
+        ReadOnlyMemory<byte> data,
+        List<ReadOnlyMemory<byte>> sectorBuffers,
         List<uint> fat,
         List<uint> miniFat,
-        List<byte> miniStream)
+        List<byte> miniStream,
+        CancellationToken cancellationToken)
     {
-        if (span.IsEmpty)
+        if (data.IsEmpty)
         {
             return CompoundFileFormat.EndOfChain;
         }
 
-        return span.Length < CompoundFileFormat.MiniStreamCutoff
-            ? AppendMiniChain(span, miniFat, miniStream)
-            : AppendRegularChain(span, sectorBuffers, fat);
+        return data.Length < CompoundFileFormat.MiniStreamCutoff
+            ? AppendMiniChain(data.Span, miniFat, miniStream, cancellationToken)
+            : AppendRegularChain(data, sectorBuffers, fat, cancellationToken);
     }
 
     /// <summary>Appends a stream to the 64-byte mini stream and updates the mini-FAT.</summary>
     /// <param name="data">The stream data (<c>&lt; 4096</c> bytes).</param>
     /// <param name="miniFat">The mini-FAT entries.</param>
     /// <param name="miniStream">The mini-stream byte list.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The starting mini-sector index.</returns>
-    private static uint AppendMiniChain(ReadOnlySpan<byte> data, List<uint> miniFat, List<byte> miniStream)
+    private static uint AppendMiniChain(ReadOnlySpan<byte> data, List<uint> miniFat, List<byte> miniStream, CancellationToken cancellationToken)
     {
         var sectorCount = (data.Length + CompoundFileFormat.MiniSectorSize - 1) / CompoundFileFormat.MiniSectorSize;
         var firstSector = (uint)miniFat.Count;
         for (var i = 0; i < sectorCount; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var next = i + 1 < sectorCount ? firstSector + (uint)i + 1U : CompoundFileFormat.EndOfChain;
             miniFat.Add(next);
             var offset = i * CompoundFileFormat.MiniSectorSize;
@@ -297,18 +313,20 @@ internal static class CompoundFileWriter
     /// <param name="data">The stream or table bytes.</param>
     /// <param name="sectorBuffers">The regular 512-byte sector list.</param>
     /// <param name="fat">The FAT entry list.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The starting regular sector index.</returns>
-    private static uint AppendRegularChain(ReadOnlySpan<byte> data, List<byte[]> sectorBuffers, List<uint> fat)
+    private static uint AppendRegularChain(ReadOnlyMemory<byte> data, List<ReadOnlyMemory<byte>> sectorBuffers, List<uint> fat, CancellationToken cancellationToken)
     {
         var sectorCount = (data.Length + CompoundFileFormat.HeaderSize - 1) / CompoundFileFormat.HeaderSize;
         var firstSector = (uint)sectorBuffers.Count;
         for (var i = 0; i < sectorCount; i++)
         {
-            var sector = new byte[CompoundFileFormat.HeaderSize];
+            cancellationToken.ThrowIfCancellationRequested();
             var offset = i * CompoundFileFormat.HeaderSize;
             var chunkLen = Math.Min(CompoundFileFormat.HeaderSize, data.Length - offset);
-            data.Slice(offset, chunkLen).CopyTo(sector);
-            sectorBuffers.Add(sector);
+
+            // Borrow stream slices until the final owned output is copied; its zeroed tail pads the last sector.
+            sectorBuffers.Add(data.Slice(offset, chunkLen));
             var next = i + 1 < sectorCount ? firstSector + (uint)i + 1U : CompoundFileFormat.EndOfChain;
             fat.Add(next);
         }
@@ -321,18 +339,21 @@ internal static class CompoundFileWriter
     /// <param name="fat">The FAT entries.</param>
     /// <param name="firstDifatSector">Receives the first DIFAT sector index or <see cref="CompoundFileFormat.EndOfChain"/>.</param>
     /// <param name="difatSectorCount">Receives the DIFAT sector count.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The ordered list of FAT sector indices.</returns>
     private static List<uint> AppendFatAndDifatSectors(
-        List<byte[]> sectorBuffers,
+        List<ReadOnlyMemory<byte>> sectorBuffers,
         List<uint> fat,
         out uint firstDifatSector,
-        out uint difatSectorCount)
+        out uint difatSectorCount,
+        CancellationToken cancellationToken)
     {
         const int difatLinksPerSector = FatEntriesPerSector - 1;
         var fatSectors = 1;
         var difatSectors = 0;
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var neededFat = (fat.Count + fatSectors + difatSectors + FatEntriesPerSector - 1) / FatEntriesPerSector;
             var neededDifat = neededFat <= CompoundFileFormat.HeaderDifatCount
                 ? 0
@@ -350,7 +371,7 @@ internal static class CompoundFileWriter
         for (var i = 0; i < fatSectors; i++)
         {
             fatSectorIndices.Add((uint)sectorBuffers.Count);
-            sectorBuffers.Add(new byte[CompoundFileFormat.HeaderSize]);
+            sectorBuffers.Add(ReadOnlyMemory<byte>.Empty);
             fat.Add(CompoundFileFormat.FatSector);
         }
 
@@ -358,19 +379,19 @@ internal static class CompoundFileWriter
         difatSectorCount = (uint)difatSectors;
         if (difatSectors > 0)
         {
-            firstDifatSector = AppendDifatChain(sectorBuffers, fat, fatSectorIndices, difatSectors);
+            firstDifatSector = AppendDifatChain(sectorBuffers, fat, fatSectorIndices, difatSectors, cancellationToken);
         }
 
         while (fat.Count < fatSectors * FatEntriesPerSector)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             fat.Add(CompoundFileFormat.Free);
         }
 
-        var fatBytes = EncodeUInt32Table(fat, fat.Count);
+        var fatBytes = EncodeUInt32Table(fat, fat.Count, cancellationToken);
         for (var i = 0; i < fatSectors; i++)
         {
-            fatBytes.AsSpan(i * CompoundFileFormat.HeaderSize, CompoundFileFormat.HeaderSize)
-                .CopyTo(sectorBuffers[(int)fatSectorIndices[i]]);
+            sectorBuffers[(int)fatSectorIndices[i]] = fatBytes.AsMemory(i * CompoundFileFormat.HeaderSize, CompoundFileFormat.HeaderSize);
         }
 
         return fatSectorIndices;
@@ -381,18 +402,21 @@ internal static class CompoundFileWriter
     /// <param name="fat">The FAT entries.</param>
     /// <param name="fatSectorIndices">All FAT sector indices.</param>
     /// <param name="difatSectors">The number of DIFAT sectors to write.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The index of the first DIFAT sector.</returns>
     private static uint AppendDifatChain(
-        List<byte[]> sectorBuffers,
+        List<ReadOnlyMemory<byte>> sectorBuffers,
         List<uint> fat,
         List<uint> fatSectorIndices,
-        int difatSectors)
+        int difatSectors,
+        CancellationToken cancellationToken)
     {
         const int perSector = FatEntriesPerSector - 1;
         var firstDifat = (uint)sectorBuffers.Count;
         var fatListPos = CompoundFileFormat.HeaderDifatCount;
         for (var d = 0; d < difatSectors; d++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var mySector = (uint)sectorBuffers.Count;
             var buffer = new byte[CompoundFileFormat.HeaderSize];
             buffer.AsSpan().Fill(0xFF);
@@ -453,8 +477,9 @@ internal static class CompoundFileWriter
     /// <summary>Encodes a list of 32-bit sector numbers into a little-endian byte buffer padded with <see cref="CompoundFileFormat.Free"/>.</summary>
     /// <param name="values">The sector numbers.</param>
     /// <param name="paddedCount">The total number of 32-bit entries to write.</param>
+    /// <param name="cancellationToken">Cancels serialization.</param>
     /// <returns>The encoded bytes.</returns>
-    private static byte[] EncodeUInt32Table(List<uint> values, int paddedCount)
+    private static byte[] EncodeUInt32Table(List<uint> values, int paddedCount, CancellationToken cancellationToken)
     {
         if (values.Count == 0)
         {
@@ -465,6 +490,7 @@ internal static class CompoundFileWriter
         bytes.AsSpan().Fill(0xFF);
         for (var i = 0; i < values.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(i * sizeof(uint)), values[i]);
         }
 

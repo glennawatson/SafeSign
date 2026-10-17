@@ -170,7 +170,7 @@ public sealed class RpmFileSigner : IFileFormatSigner
     /// <param name="session">The signing session.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>The hex-encoded IMA signatures and the maximum raw IMA signature byte length.</returns>
-    private static async ValueTask<(string[] Signatures, int Longest)> SignFileDigestsAsync(
+    private static async ValueTask<RpmFileDigestSignatures> SignFileDigestsAsync(
         SortedDictionary<int, RpmHeaderEntry> mainHeader,
         byte[] keyId,
         SigningSession session,
@@ -178,7 +178,7 @@ public sealed class RpmFileSigner : IFileFormatSigner
     {
         if (!mainHeader.TryGetValue(TagFileDigests, out var digestEntry))
         {
-            return ([], 0);
+            return new([], 0);
         }
 
         var digests = RpmHeaderCodec.DecodeStrings(digestEntry);
@@ -212,7 +212,7 @@ public sealed class RpmFileSigner : IFileFormatSigner
             longest = Math.Max(longest, ima.Length);
         }
 
-        return (signatures, longest);
+        return new(signatures, longest);
     }
 
     /// <summary>Recomputes the Signature Header digests and size over the untouched main header and payload.</summary>

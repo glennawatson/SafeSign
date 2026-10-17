@@ -12,7 +12,7 @@ namespace SafeSign.Benchmarks;
 
 /// <summary>An in-memory RSA-2048 <see cref="ISigningProvider"/> for benchmarks and allocation audits.</summary>
 [DebuggerDisplay("{Name,nq}")]
-public sealed class BenchmarkSigningProvider : ISigningProvider
+public sealed class BenchmarkSigningProvider : ISigningProvider, IDisposable
 {
     /// <summary>The RSA key size in bits.</summary>
     private const int RsaKeySizeBits = 2048;
@@ -25,6 +25,9 @@ public sealed class BenchmarkSigningProvider : ISigningProvider
 
     /// <summary>The cached <see cref="SigningCertificate"/> wrapper.</summary>
     private readonly SigningCertificate _signingCertificate;
+
+    /// <summary>The atomic disposal flag.</summary>
+    private int _disposed;
 
     /// <summary>Initializes a new instance of the <see cref="BenchmarkSigningProvider"/> class.</summary>
     public BenchmarkSigningProvider()
@@ -45,17 +48,31 @@ public sealed class BenchmarkSigningProvider : ISigningProvider
     public ValueTask<SigningCertificate> GetCertificateAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(_signingCertificate);
 
+    /// <summary>Releases the signing key and certificate.</summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _rsa.Dispose();
+        _signingCertificate.Certificate.Dispose();
+    }
+
     /// <inheritdoc/>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<byte[]> SignDigestAsync(SignDigestRequest request, CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        cancellationToken.ThrowIfCancellationRequested();
         var signature = _rsa.SignHash(request.Digest.Span, request.HashAlgorithm, RSASignaturePadding.Pkcs1);
         return ValueTask.FromResult(signature);
     }
 
     /// <summary>Creates the shared RSA-2048 key and self-signed code-signing certificate.</summary>
     /// <returns>The RSA key and <see cref="SigningCertificate"/>.</returns>
-    private static (RSA Rsa, SigningCertificate Certificate) CreateSharedKeyAndCertificate()
+    private static BenchmarkSigningMaterial CreateSharedKeyAndCertificate()
     {
         var rsa = RSA.Create(RsaKeySizeBits);
         var req = new CertificateRequest("CN=SafeSign Benchmark Signer", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -65,6 +82,6 @@ public sealed class BenchmarkSigningProvider : ISigningProvider
         var now = TimeProvider.System.GetUtcNow();
         using var fullCert = req.CreateSelfSigned(now.AddMinutes(CertSkewMinutes), now.AddDays(1));
         var certificate = X509CertificateLoader.LoadCertificate(fullCert.RawData);
-        return (rsa, new(certificate, []));
+        return new(rsa, new(certificate, []));
     }
 }

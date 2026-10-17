@@ -64,7 +64,7 @@ public static class SslComRequests
         string bearerToken,
         PublicKeyKind keyKind,
         SignDigestRequest request,
-        (TimeProvider Clock, ProviderRetryOptions Retry) execution,
+        SslComSigningExecution execution,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(api);
@@ -187,7 +187,7 @@ public static class SslComRequests
     /// <returns>The signature algorithm OID.</returns>
     /// <exception cref="NotSupportedException">The key kind and hash algorithm combination is not supported.</exception>
     private static string MapSignAlgoOid(PublicKeyKind keyKind, HashAlgorithmName hashAlgorithm) =>
-        (keyKind, hashAlgorithm.Name) switch
+        new ProviderSignatureAlgorithm(keyKind, hashAlgorithm.Name) switch
         {
             (PublicKeyKind.Rsa, "SHA256") => "1.2.840.113549.1.1.11",
             (PublicKeyKind.Rsa, "SHA384") => "1.2.840.113549.1.1.12",

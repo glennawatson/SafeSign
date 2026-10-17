@@ -55,7 +55,7 @@ public sealed class CscProvider : ISigningProvider
     /// <param name="hash">The hash algorithm.</param>
     /// <returns>The signature algorithm OID.</returns>
     /// <exception cref="NotSupportedException">The combination is not supported.</exception>
-    public static string SignAlgoOid(PublicKeyKind kind, HashAlgorithmName hash) => (kind, hash.Name) switch
+    public static string SignAlgoOid(PublicKeyKind kind, HashAlgorithmName hash) => new ProviderSignatureAlgorithm(kind, hash.Name) switch
     {
         (PublicKeyKind.Rsa, "SHA256") => "1.2.840.113549.1.1.11",
         (PublicKeyKind.Rsa, "SHA384") => "1.2.840.113549.1.1.12",

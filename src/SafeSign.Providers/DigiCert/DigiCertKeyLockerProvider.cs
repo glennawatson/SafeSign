@@ -68,7 +68,7 @@ public sealed class DigiCertKeyLockerProvider : ISigningProvider
     /// <param name="hash">The hash algorithm.</param>
     /// <returns>The JCA signature algorithm string.</returns>
     /// <exception cref="NotSupportedException">The combination is not supported.</exception>
-    public static string Algorithm(PublicKeyKind kind, HashAlgorithmName hash) => (kind, hash.Name) switch
+    public static string Algorithm(PublicKeyKind kind, HashAlgorithmName hash) => new ProviderSignatureAlgorithm(kind, hash.Name) switch
     {
         (PublicKeyKind.Rsa, "SHA256") => "SHA256withRSA",
         (PublicKeyKind.Rsa, "SHA384") => "SHA384withRSA",

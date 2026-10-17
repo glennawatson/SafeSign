@@ -313,7 +313,7 @@ internal static class NuGetSignatureArchive
     /// <param name="eocd">The record's offset.</param>
     /// <returns>The entry count and the central directory offset and size.</returns>
     /// <exception cref="InvalidDataException">The archive spans disks, uses ZIP64, or the record is inconsistent.</exception>
-    private static (int Count, int Offset, int Size) ReadEndOfCentralDirectory(ReadOnlySpan<byte> zip, int eocd)
+    private static ZipEndOfCentralDirectory ReadEndOfCentralDirectory(ReadOnlySpan<byte> zip, int eocd)
     {
         var record = zip[eocd..];
         if (BinaryPrimitives.ReadUInt16LittleEndian(record[EndDiskNumberOffset..]) != 0
@@ -333,7 +333,7 @@ internal static class NuGetSignatureArchive
         }
 
         return BinaryPrimitives.ReadUInt16LittleEndian(record[EndDiskEntriesOffset..]) == count && (long)offset + size <= eocd
-            ? (count, (int)offset, (int)size)
+            ? new(count, (int)offset, (int)size)
             : throw new InvalidDataException("The end of central directory record is inconsistent with the archive.");
     }
 

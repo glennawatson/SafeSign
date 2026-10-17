@@ -248,7 +248,7 @@ public sealed class NuGetFileSignerTests
     /// <summary>Signs a fresh sample package and returns the unsigned and signed bytes.</summary>
     /// <param name="session">The signing session.</param>
     /// <returns>The unsigned and signed package bytes.</returns>
-    private static async Task<(byte[] Unsigned, byte[] Signed)> SignSampleAsync(SigningSession session)
+    private static async Task<SignedNuGetSample> SignSampleAsync(SigningSession session)
     {
         var tempDir = Directory.CreateTempSubdirectory("safesign-nupkg-");
         try
@@ -257,7 +257,7 @@ public sealed class NuGetFileSignerTests
             var path = Path.Combine(tempDir.FullName, "Sample.1.0.0.nupkg");
             await File.WriteAllBytesAsync(path, unsigned);
             await new NuGetFileSigner().SignAsync(new(path, path, session), CancellationToken.None);
-            return (unsigned, await File.ReadAllBytesAsync(path));
+            return new(unsigned, await File.ReadAllBytesAsync(path));
         }
         finally
         {
@@ -311,4 +311,9 @@ public sealed class NuGetFileSignerTests
     /// <param name="zip">The archive bytes.</param>
     /// <returns>The offset.</returns>
     private static int FindCentralDirectoryOffset(byte[] zip) => NuGetSignatureArchive.ReadDirectory(zip).CentralDirectoryOffset;
+
+    /// <summary>The package bytes before and after signing.</summary>
+    /// <param name="Unsigned">The original package bytes.</param>
+    /// <param name="Signed">The signed package bytes.</param>
+    private readonly record struct SignedNuGetSample(byte[] Unsigned, byte[] Signed);
 }

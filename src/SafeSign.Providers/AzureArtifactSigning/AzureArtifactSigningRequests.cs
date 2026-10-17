@@ -137,7 +137,7 @@ public static class AzureArtifactSigningRequests
     /// <param name="hash">The digest algorithm.</param>
     /// <returns>The signature algorithm name (<c>RS256</c>, <c>RS384</c>, <c>RS512</c>, <c>ES256</c>, <c>ES384</c>, or <c>ES512</c>).</returns>
     /// <exception cref="NotSupportedException">The combination is not supported.</exception>
-    public static string Algorithm(PublicKeyKind kind, HashAlgorithmName hash) => (kind, hash.Name) switch
+    public static string Algorithm(PublicKeyKind kind, HashAlgorithmName hash) => new ProviderSignatureAlgorithm(kind, hash.Name) switch
     {
         (PublicKeyKind.Rsa, "SHA256") => "RS256",
         (PublicKeyKind.Rsa, "SHA384") => "RS384",

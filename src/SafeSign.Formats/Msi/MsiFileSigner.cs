@@ -103,7 +103,7 @@ public sealed class MsiFileSigner : IFileFormatSigner
             cancellationToken).ConfigureAwait(false);
 
         children.Add(new(DigitalSignatureStreamName, default, signature, null));
-        var signedBytes = CompoundFileWriter.Write(root);
+        var signedBytes = CompoundFileWriter.Write(root, cancellationToken);
         await File.WriteAllBytesAsync(path, signedBytes, cancellationToken).ConfigureAwait(false);
     }
 

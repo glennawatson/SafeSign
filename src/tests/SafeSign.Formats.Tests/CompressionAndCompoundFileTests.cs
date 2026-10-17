@@ -113,7 +113,7 @@ public sealed class CompressionAndCompoundFileTests
                 subStorage,
             ]);
 
-        var serialized = CompoundFileWriter.Write(root);
+        var serialized = CompoundFileWriter.Write(root, CancellationToken.None);
         await Assert.That(CompoundFileFormat.HasSignature(serialized)).IsTrue();
 
         var parsed = CompoundFileReader.Read(serialized);
