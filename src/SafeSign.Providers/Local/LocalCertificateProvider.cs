@@ -72,7 +72,7 @@ public sealed class LocalCertificateProvider(LocalCertificateOptions options) : 
         var collection = X509CertificateLoader.LoadPkcs12Collection(
             rawBytes,
             options.Password,
-            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
+            ProviderHttp.Pkcs12StorageFlags);
         List<X509Certificate2> certificates = [.. collection];
         var arranged = CertificateChainOrder.Arrange(certificates, options.CertificateFile);
         return !arranged.Certificate.HasPrivateKey

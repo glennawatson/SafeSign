@@ -31,6 +31,12 @@ public sealed class CertumSimplySignTests
     /// <summary>The RFC 6238 SHA-256 32-byte ASCII test secret encoded in Base32.</summary>
     private const string Rfc6238Sha256Base32Secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA====";
 
+    /// <summary>The CAS OAuth 2.0 authorize route path.</summary>
+    private const string AuthorizeRoute = "/idp/oauth2.0/authorize";
+
+    /// <summary>The CAS login route path.</summary>
+    private const string LoginRoute = "/idp/login";
+
     /// <summary>Verifies RFC 6238 SHA-256 6-digit TOTP generation and <c>otpauth://</c> URI parsing.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
@@ -63,6 +69,37 @@ public sealed class CertumSimplySignTests
         await Assert.That(options.TotpSecret).IsEqualTo(sha256Uri);
         await Assert.That(totp.Algorithm).IsEqualTo(CertumTotpAlgorithm.Sha256);
         await Assert.That(code).IsEqualTo("119246");
+    }
+
+    /// <summary>Verifies <see cref="CertumTotp.Parse"/> supports <c>algorithm=SHA1</c> in <c>otpauth://</c> URIs.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumTotp_SupportsSha1OtpAuthUri()
+    {
+        const string sha1Uri = "otpauth://totp/Certum:me@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Certum&algorithm=SHA1&digits=8&period=30";
+        var totp = CertumTotp.Parse(sha1Uri);
+        var code = totp.GenerateCode(DateTimeOffset.FromUnixTimeSeconds(Rfc6238TestSeconds));
+
+        await Assert.That(totp.Algorithm).IsEqualTo(CertumTotpAlgorithm.Sha1);
+        await Assert.That(code).IsEqualTo("94287082");
+    }
+
+    /// <summary>Verifies that a CAS <c>401 Unauthorized</c> response produces a detailed <see cref="ProviderRequestException"/> with the server error message.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task CertumRequests_AcquireTokenAsync_ReportsDetailedDiagnosticMessageOnCas401()
+    {
+        using var http = new StubHttp();
+        AddCas401Routes(http);
+
+        var options = new CertumOptions { Email = "dev@example.com", TotpSecret = Rfc6238Sha256Base32Secret, RetryOptions = ProviderRetryOptions.FastTest };
+
+        var exception = await Assert.ThrowsAsync<ProviderRequestException>(
+            async () => _ = await CertumRequests.AcquireTokenAsync(http.ToSettings(), options, TimeProvider.System, CancellationToken.None));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(exception.Message).Contains("401");
+        await Assert.That(exception.Message).Contains("The provided credentials could not be recognized as valid.");
     }
 
     /// <summary>Verifies UTF-8 span multipart extraction for certificate PEM payloads.</summary>
@@ -130,44 +167,112 @@ public sealed class CertumSimplySignTests
         await http.VerifyAllCalledAsync();
     }
 
+    /// <summary>Registers a failing CAS OAuth 2.0 login sequence returning <c>401 Unauthorized</c> on <paramref name="http"/>.</summary>
+    /// <param name="http">The stub HTTP host.</param>
+    private static void AddCas401Routes(StubHttp http)
+    {
+        http.Add(
+            Route.Get(AuthorizeRoute),
+            Reply.From(static (_, _) => Task.FromResult(
+                CreateRedirectResponse("https://cloudsign.webnotarius.pl/idp/login?service=https%3A%2F%2Fcloudsign.webnotarius.pl%2Fidp%2Foauth2.0%2FcallbackAuthorize"))));
+        http.Add(
+            Route.Get(LoginRoute),
+            Reply.From(static (_, _) => Task.FromResult(
+                CreateHtmlResponse(
+                    HttpStatusCode.OK,
+                    """<form method="post"><input data-name="ignored" type="hidden" name="execution" value="e1s1" /><input type="hidden" name="lt" value="" /></form>"""u8))));
+        http.Add(
+            Route.Post(LoginRoute),
+            Reply.From(static (_, _) => Task.FromResult(
+                CreateHtmlResponse(
+                    HttpStatusCode.Unauthorized,
+                    """
+                    <html><body>
+                    <div class="ds-form-message ds-form-message--error">
+                        <i class="ico-warning"></i><span>The provided credentials could not be recognized as valid.</span>
+                    </div>
+                    </body></html>
+                    """u8))));
+    }
+
     /// <summary>Registers the CAS OAuth 2.0 login and token endpoints on <paramref name="http"/>.</summary>
     /// <param name="http">The stub HTTP host.</param>
     private static void AddCasOAuthRoutes(StubHttp http)
     {
+        const string loginLocation =
+            "https://cloudsign.webnotarius.pl/idp/login?service="
+            + "https%3A%2F%2Fcloudsign.webnotarius.pl%2Fidp%2Foauth2.0%2FcallbackAuthorize"
+            + "%3Fclient_id%3D44rvDKKEWY53a7xBeF5w%26response_type%3Dcode"
+            + "%26redirect_uri%3Dhttps%253A%252F%252Fcloudsign.webnotarius.pl%252Fredirect%26client_name%3DCasOAuthClient";
+        const string callbackLocation =
+            "https://cloudsign.webnotarius.pl/idp/oauth2.0/callbackAuthorize"
+            + "?client_id=44rvDKKEWY53a7xBeF5w&response_type=code"
+            + "&redirect_uri=https%3A%2F%2Fcloudsign.webnotarius.pl%2Fredirect&client_name=CasOAuthClient&ticket=ST-1";
+        const string authorizeLocation =
+            "https://cloudsign.webnotarius.pl/idp/oauth2.0/authorize"
+            + "?response_type=code&client_id=44rvDKKEWY53a7xBeF5w"
+            + "&redirect_uri=https%3A%2F%2Fcloudsign.webnotarius.pl%2Fredirect"
+            + "&scope=https%3A%2F%2Fcloudsign.webnotarius.pl%2Fidp%2Foauth2.0%2Fprofile&api_key=";
+        var loginFormHtml =
+            """
+            <form method="post">
+                <input autocomplete="username" name="username" value="" />
+                <input type="hidden" name="lt" value="" />
+                <input type="hidden" name="execution" value="e1s1" />
+            </form>
+            """u8;
+        var loginPageReply = CreateHtmlResponse(HttpStatusCode.OK, loginFormHtml);
+
         http.Add(
-            Route.Get("/idp/oauth2.0/authorize"),
-            Reply.From(static (_, _) =>
-            {
-                var response = new HttpResponseMessage(HttpStatusCode.Found);
-                response.Headers.Location = new("https://cloudsign.webnotarius.pl/idp/login?service=https%3A%2F%2Fcloudsign.webnotarius.pl%2Fidp%2Foauth2.0%2FcallbackAuthorize");
-                return Task.FromResult(response);
-            }));
+            Route.Get(AuthorizeRoute),
+            Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse(loginLocation, "SESSION=sess-1; Path=/idp/; Secure; HttpOnly;SameSite=None"))));
+        http.Add(Route.Get(LoginRoute), Reply.From((_, _) => Task.FromResult(loginPageReply)));
         http.Add(
-            Route.Get("/idp/login"),
-            Reply.From(static (_, _) =>
-            {
-                var html =
-                    """<form method="post"><input type="hidden" name="execution" value="e1s1" /><input type="hidden" name="lt" value="LT-99" /></form>"""u8;
-                var content = new ByteArrayContent(html.ToArray());
-                content.Headers.ContentType = new("text/html");
-                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
-                response.Headers.Add("Set-Cookie", "JSESSIONID=sess-1; Path=/idp; HttpOnly");
-                return Task.FromResult(response);
-            }));
+            Route.Post(LoginRoute),
+            Reply.From(static (_, _) => Task.FromResult(
+                CreateRedirectResponse(
+                    callbackLocation,
+                    "CASPRIVACY=\"\"; Domain=.cloudsign.webnotarius.pl; Max-Age=0; Path=/idp; Secure; HttpOnly",
+                    "TGC=tgt-1; Path=/idp/; Secure; HttpOnly;SameSite=None"))));
         http.Add(
-            Route.Post("/idp/login"),
-            Reply.From(static (_, _) =>
-            {
-                var response = new HttpResponseMessage(HttpStatusCode.Found);
-                response.Headers.Location = new("https://cloudsign.webnotarius.pl/redirect?code=ST-AUTH-CODE-1");
-                return Task.FromResult(response);
-            }));
+            Route.Get("/idp/oauth2.0/callbackAuthorize"),
+            Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse(authorizeLocation))));
+        http.Add(
+            Route.Get(AuthorizeRoute),
+            Reply.From(static (_, _) => Task.FromResult(CreateRedirectResponse("https://cloudsign.webnotarius.pl/redirect?code=OC-AUTH-CODE-1"))));
         http.Add(
             Route.Post("/idp/oauth2.0/accessToken"),
             Reply.Json("{\"access_token\":\"AT-INITIAL\",\"refresh_token\":\"RT-REUSABLE\",\"expires_in\":30}"));
         http.Add(
             Route.Post("/idp/oauth2.0/accessToken"),
             Reply.Json("{\"access_token\":\"AT-REFRESHED\",\"refresh_token\":\"RT-REUSABLE\",\"expires_in\":1800}"));
+    }
+
+    /// <summary>Creates a <c>302 Found</c> response with a <c>Location</c> header and optional <c>Set-Cookie</c> headers.</summary>
+    /// <param name="location">The redirect target URL.</param>
+    /// <param name="setCookies">Optional <c>Set-Cookie</c> header values.</param>
+    /// <returns>The constructed redirect response.</returns>
+    private static HttpResponseMessage CreateRedirectResponse(string location, params string[] setCookies)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.Found);
+        response.Headers.Location = new(location);
+        foreach (var cookie in setCookies)
+        {
+            response.Headers.Add("Set-Cookie", cookie);
+        }
+
+        return response;
+    }
+
+    /// <summary>Creates an HTML <see cref="HttpResponseMessage"/> with the given status code and UTF-8 body.</summary>
+    /// <param name="status">The HTTP status code.</param>
+    /// <param name="html">The UTF-8 HTML payload.</param>
+    /// <returns>The constructed HTML response.</returns>
+    private static HttpResponseMessage CreateHtmlResponse(HttpStatusCode status, ReadOnlySpan<byte> html)
+    {
+        var content = new ByteArrayContent(html.ToArray());
+        content.Headers.ContentType = new("text/html");
+        return new(status) { Content = content };
     }
 
     /// <summary>Registers the SCS1_ATOM card, certificate, and signature task endpoints on <paramref name="http"/>.</summary>

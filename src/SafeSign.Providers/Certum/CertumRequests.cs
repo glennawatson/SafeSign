@@ -111,8 +111,12 @@ public static class CertumRequests
             throw new ProviderConfigurationException("Certum SimplySign login requires an account email address.");
         }
 
-        var otp = ResolveOtpCode(options, time);
-        return await LoginWithCasAsync(api, options, email, otp, time, cancellationToken).ConfigureAwait(false);
+        if (options.TotpSecret is not { Length: > 0 } && options.OtpCode is not { Length: > 0 })
+        {
+            throw new ProviderConfigurationException("Certum SimplySign login requires either TotpSecret or OtpCode.");
+        }
+
+        return await LoginWithCasAsync(api, options, email, time, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Materializes the SimplySign virtual card and its signing certificate.</summary>
@@ -177,6 +181,7 @@ public static class CertumRequests
             certificates.AddRange(CertificateFile.Read(chainBytes));
         }
 
+        CertumIntermediateCertificates.TryAddMatchingIntermediate(certificates);
         var signingCertificate = CertificateChainOrder.Arrange(certificates, $"Certum card '{serial}'");
         return new(serial, certificatePem, signingCertificate);
     }
@@ -294,6 +299,36 @@ public static class CertumRequests
         _ => throw new NotSupportedException($"Certum SimplySign does not support {hash.Name} digests."),
     };
 
+    /// <summary>Extracts a human-readable error message from a Certum CAS HTML or plain-text error response.</summary>
+    /// <param name="responseText">The response body text.</param>
+    /// <returns>The extracted error message, or <see langword="null"/> when none could be found.</returns>
+    public static string? ExtractCasErrorMessage(ReadOnlySpan<char> responseText)
+    {
+        var trimmed = responseText.Trim();
+        if (trimmed.IsEmpty)
+        {
+            return null;
+        }
+
+        if (ExtractFirstSpanAfterMarker(trimmed, "ds-form-message--error") is { Length: > 0 } formError)
+        {
+            return formError;
+        }
+
+        if (ExtractElementText(trimmed, "<title>", "</title>") is { Length: > 0 } titleText)
+        {
+            return titleText;
+        }
+
+        if (!trimmed.StartsWith("<", StringComparison.Ordinal))
+        {
+            var previewLen = Math.Min(trimmed.Length, MaxErrorPreviewBytes);
+            return trimmed[..previewLen].ToString();
+        }
+
+        return null;
+    }
+
     /// <summary>Resolves the 6-digit OTP code from either <see cref="CertumOptions.TotpSecret"/> or <see cref="CertumOptions.OtpCode"/>.</summary>
     /// <param name="options">The Certum options.</param>
     /// <param name="time">The clock.</param>
@@ -326,7 +361,6 @@ public static class CertumRequests
     /// <param name="api">The Certum Refit client.</param>
     /// <param name="options">The Certum options.</param>
     /// <param name="email">The account email.</param>
-    /// <param name="otp">The 6-digit OTP code.</param>
     /// <param name="time">The clock.</param>
     /// <param name="cancellationToken">Cancels the HTTP requests.</param>
     /// <returns>The bearer access token and expiry.</returns>
@@ -335,7 +369,6 @@ public static class CertumRequests
         ICertumCloudSignApi api,
         CertumOptions options,
         string email,
-        string otp,
         TimeProvider time,
         CancellationToken cancellationToken)
     {
@@ -352,9 +385,11 @@ public static class CertumRequests
         var (loginHtml, loginUri) = await FollowToLoginPageAsync(api, options, authorizeResponse, cookies, time, cancellationToken).ConfigureAwait(false);
 
         var execution = ExtractHiddenInputValue(loginHtml, "execution")
-            ?? throw new ProviderRequestException("Certum CAS login page did not contain a hidden 'execution' input.");
+            ?? throw new ProviderRequestException(
+                $"Certum CAS login page at '{loginUri?.GetLeftPart(UriPartial.Path) ?? "/idp/login"}' did not contain a hidden 'execution' input.");
         var lt = ExtractHiddenInputValue(loginHtml, "lt") ?? string.Empty;
         var service = loginUri is not null ? ExtractQueryParameter(loginUri, "service") : null;
+        var otp = ResolveOtpCode(options, time);
 
         Dictionary<string, string> form = new(StringComparer.Ordinal)
         {
@@ -372,7 +407,7 @@ public static class CertumRequests
             options.RetryOptions,
             time,
             cancellationToken).ConfigureAwait(false);
-        var authorizationCode = await RecoverAuthorizationCodeAsync(api, options, loginResponse, cookies, time, cancellationToken).ConfigureAwait(false);
+        var authorizationCode = await RecoverAuthorizationCodeAsync(api, options, loginResponse, loginUri, cookies, time, cancellationToken).ConfigureAwait(false);
 
         using var tokenResponse = await ProviderRetry.ExecuteAsync(
             ct => api.ExchangeAuthorizationCodeAsync(
@@ -417,7 +452,7 @@ public static class CertumRequests
                 if (!IsRedirect(current.StatusCode) || current.Headers.Location is not { } location)
                 {
                     var bytes = await ProviderHttp.ReadBytesAsync(current, "GET /idp/login", cancellationToken).ConfigureAwait(false);
-                    return (Encoding.UTF8.GetString(bytes), current.RequestMessage?.RequestUri ?? lastUri);
+                    return (Encoding.UTF8.GetString(bytes), lastUri ?? current.RequestMessage?.RequestUri);
                 }
 
                 var target = location.IsAbsoluteUri ? location : new Uri(options.Endpoint, location);
@@ -445,6 +480,7 @@ public static class CertumRequests
     /// <param name="api">The Certum Refit client.</param>
     /// <param name="options">The Certum options.</param>
     /// <param name="initial">The response from <c>POST /idp/login</c>.</param>
+    /// <param name="loginUri">The login page URI that received the POST.</param>
     /// <param name="cookies">Accumulates session cookies across redirect hops.</param>
     /// <param name="time">The clock.</param>
     /// <param name="cancellationToken">Cancels the HTTP requests.</param>
@@ -454,14 +490,17 @@ public static class CertumRequests
         ICertumCloudSignApi api,
         CertumOptions options,
         HttpResponseMessage initial,
+        Uri? loginUri,
         Dictionary<string, string> cookies,
         TimeProvider time,
         CancellationToken cancellationToken)
     {
         var current = initial;
+        var lastUri = current.RequestMessage?.RequestUri ?? loginUri;
+        var hops = 0;
         try
         {
-            for (var hop = 0; hop < MaxLoginRedirects; hop++)
+            for (; hops < MaxLoginRedirects; hops++)
             {
                 CollectCookies(current, cookies);
                 if (TryExtractCodeFromResponse(current, options.Endpoint, out var authorizationCode, out var nextTarget))
@@ -474,6 +513,7 @@ public static class CertumRequests
                     break;
                 }
 
+                lastUri = nextTarget;
                 current.Dispose();
                 var cookieHeader = FormatCookieHeader(cookies);
                 var nextPath = nextTarget.AbsolutePath.TrimStart('/');
@@ -485,12 +525,36 @@ public static class CertumRequests
                     cancellationToken).ConfigureAwait(false);
             }
 
-            throw new ProviderRequestException("Certum CAS login did not produce an OAuth authorization code (check email and OTP).");
+            throw await BuildCasLoginFailureAsync(current, lastUri, hops, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             current.Dispose();
         }
+    }
+
+    /// <summary>Builds a detailed <see cref="ProviderRequestException"/> when CAS login does not produce an authorization code.</summary>
+    /// <param name="response">The final HTTP response from CAS.</param>
+    /// <param name="lastUri">The last target URI requested.</param>
+    /// <param name="hops">The number of redirect hops followed after <c>POST /idp/login</c>.</param>
+    /// <param name="cancellationToken">Cancels reading the response body.</param>
+    /// <returns>The constructed <see cref="ProviderRequestException"/>.</returns>
+    private static async ValueTask<ProviderRequestException> BuildCasLoginFailureAsync(
+        HttpResponseMessage response,
+        Uri? lastUri,
+        int hops,
+        CancellationToken cancellationToken)
+    {
+        var bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var bodyText = Encoding.UTF8.GetString(bodyBytes);
+        var casMessage = ExtractCasErrorMessage(bodyText);
+        var statusText = $"{(int)response.StatusCode} {response.ReasonPhrase}".Trim();
+        var uriText = (response.RequestMessage?.RequestUri ?? lastUri)?.GetLeftPart(UriPartial.Path) ?? "/idp/login";
+        var serverDetail = casMessage is { Length: > 0 } ? $" Server message: \"{casMessage}\"." : string.Empty;
+        var message = $"Certum CAS login at '{uriText}' failed after {hops} redirect hop(s) with HTTP {statusText} "
+            + $"and did not return an OAuth authorization code.{serverDetail} "
+            + "Verify that CERTUM_USER_ID (email) and CERTUM_OTP_URI / OTP code are valid and that the system clock is synchronized.";
+        return new(message, response.StatusCode);
     }
 
     /// <summary>Inspects a login response for an OAuth <c>code</c> query parameter or next redirect target.</summary>
@@ -840,8 +904,16 @@ public static class CertumRequests
             }
 
             var name = pair[..eq].Trim().ToString();
-            var value = pair[(eq + 1)..].Trim().ToString();
-            cookies[name] = value;
+            var value = pair[(eq + 1)..].Trim();
+            if (value.IsEmpty
+                || value is "\"\""
+                || raw.Contains("Max-Age=0", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = cookies.Remove(name);
+                continue;
+            }
+
+            cookies[name] = value.ToString();
         }
     }
 
@@ -924,21 +996,108 @@ public static class CertumRequests
     /// <returns>The unquoted attribute value, or <see langword="null"/> when absent.</returns>
     private static string? ExtractQuotedAttribute(ReadOnlySpan<char> tag, string attributePrefix)
     {
-        var idx = tag.IndexOf(attributePrefix, StringComparison.OrdinalIgnoreCase);
-        if (idx < 0)
+        var remaining = tag;
+        while (!remaining.IsEmpty)
         {
-            return null;
+            var idx = remaining.IndexOf(attributePrefix, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0)
+            {
+                return null;
+            }
+
+            var afterPrefix = remaining[(idx + attributePrefix.Length)..];
+            if (IsAttributeBoundary(remaining, idx) && TryExtractQuotedValue(afterPrefix, out var value))
+            {
+                return value;
+            }
+
+            remaining = afterPrefix;
         }
 
-        var afterPrefix = tag[(idx + attributePrefix.Length)..].TrimStart();
-        if (afterPrefix.IsEmpty || afterPrefix[0] is not ('"' or '\''))
+        return null;
+    }
+
+    /// <summary>Determines whether <paramref name="index"/> is preceded by a valid HTML attribute boundary.</summary>
+    /// <param name="text">The tag interior.</param>
+    /// <param name="index">The candidate attribute start index.</param>
+    /// <returns>True when the character before <paramref name="index"/> is a boundary.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool IsAttributeBoundary(ReadOnlySpan<char> text, int index) =>
+        index == 0 || char.IsWhiteSpace(text[index - 1]) || text[index - 1] is '"' or '\'';
+
+    /// <summary>Extracts a single- or double-quoted value starting at the beginning of <paramref name="afterEquals"/>.</summary>
+    /// <param name="afterEquals">The slice immediately following <c>=</c>.</param>
+    /// <param name="value">Receives the unquoted attribute value when present.</param>
+    /// <returns>True when <paramref name="afterEquals"/> starts with a quoted string.</returns>
+    private static bool TryExtractQuotedValue(ReadOnlySpan<char> afterEquals, out string value)
+    {
+        var trimmed = afterEquals.TrimStart();
+        if (trimmed.IsEmpty || trimmed[0] is not ('"' or '\''))
         {
-            return null;
+            value = string.Empty;
+            return false;
         }
 
-        var quote = afterPrefix[0];
-        var valueSlice = afterPrefix[1..];
+        var quote = trimmed[0];
+        var valueSlice = trimmed[1..];
         var close = valueSlice.IndexOf(quote);
-        return close >= 0 ? valueSlice[..close].ToString() : valueSlice.ToString();
+        value = close >= 0 ? valueSlice[..close].ToString() : valueSlice.ToString();
+        return true;
+    }
+
+    /// <summary>Extracts the decoded text of the first <c>&lt;span&gt;</c> element after <paramref name="marker"/>.</summary>
+    /// <param name="html">The HTML text to search.</param>
+    /// <param name="marker">The marker substring preceding the span.</param>
+    /// <returns>The decoded span text, or <see langword="null"/> when not found.</returns>
+    private static string? ExtractFirstSpanAfterMarker(ReadOnlySpan<char> html, string marker)
+    {
+        var markerIdx = html.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIdx < 0)
+        {
+            return null;
+        }
+
+        var afterMarker = html[markerIdx..];
+        var spanStart = afterMarker.IndexOf("<span", StringComparison.OrdinalIgnoreCase);
+        if (spanStart < 0)
+        {
+            return null;
+        }
+
+        var afterSpan = afterMarker[spanStart..];
+        var closeBracket = afterSpan.IndexOf('>');
+        if (closeBracket < 0)
+        {
+            return null;
+        }
+
+        var contentSlice = afterSpan[(closeBracket + 1)..];
+        var endSpan = contentSlice.IndexOf("</span>", StringComparison.OrdinalIgnoreCase);
+        var rawMessage = (endSpan >= 0 ? contentSlice[..endSpan] : contentSlice).Trim();
+        return rawMessage.IsEmpty ? null : WebUtility.HtmlDecode(rawMessage.ToString()).Trim();
+    }
+
+    /// <summary>Extracts the decoded text between <paramref name="openTag"/> and <paramref name="closeTag"/>.</summary>
+    /// <param name="html">The HTML text to search.</param>
+    /// <param name="openTag">The opening tag.</param>
+    /// <param name="closeTag">The closing tag.</param>
+    /// <returns>The decoded inner text, or <see langword="null"/> when not found.</returns>
+    private static string? ExtractElementText(ReadOnlySpan<char> html, string openTag, string closeTag)
+    {
+        var startIdx = html.IndexOf(openTag, StringComparison.OrdinalIgnoreCase);
+        if (startIdx < 0)
+        {
+            return null;
+        }
+
+        var afterOpen = html[(startIdx + openTag.Length)..];
+        var endIdx = afterOpen.IndexOf(closeTag, StringComparison.OrdinalIgnoreCase);
+        if (endIdx <= 0)
+        {
+            return null;
+        }
+
+        var decoded = WebUtility.HtmlDecode(afterOpen[..endIdx].Trim().ToString()).Trim();
+        return decoded.Length > 0 ? decoded : null;
     }
 }

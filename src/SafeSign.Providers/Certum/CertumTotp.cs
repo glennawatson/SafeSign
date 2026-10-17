@@ -4,6 +4,7 @@
 
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -187,6 +188,7 @@ public sealed class CertumTotp
     /// <param name="unixTimeSeconds">Seconds since the Unix epoch.</param>
     /// <returns>The zero-padded decimal OTP code.</returns>
     /// <exception cref="InvalidOperationException">The configured algorithm is unknown.</exception>
+    [SuppressMessage("Security", "CA5350:Do Not Use Weak Cryptographic Algorithms", Justification = "RFC 6238 TOTP standard mandates HMAC-SHA1 support when algorithm=SHA1 is specified.")]
     public string GenerateCode(long unixTimeSeconds)
     {
         Span<byte> counterBytes = stackalloc byte[CounterByteLength];
@@ -195,6 +197,7 @@ public sealed class CertumTotp
         Span<byte> macBuffer = stackalloc byte[MaxMacByteLength];
         var macLength = Algorithm switch
         {
+            CertumTotpAlgorithm.Sha1 => HMACSHA1.HashData(_secret, counterBytes, macBuffer),
             CertumTotpAlgorithm.Sha256 => HMACSHA256.HashData(_secret, counterBytes, macBuffer),
             CertumTotpAlgorithm.Sha512 => HMACSHA512.HashData(_secret, counterBytes, macBuffer),
             _ => throw new InvalidOperationException($"Unsupported TOTP algorithm {Algorithm}."),
@@ -287,6 +290,7 @@ public sealed class CertumTotp
     /// <exception cref="ProviderConfigurationException">The algorithm name is not supported.</exception>
     private static CertumTotpAlgorithm ParseAlgorithm(string value) => value.ToUpperInvariant() switch
     {
+        "SHA1" => CertumTotpAlgorithm.Sha1,
         "SHA256" => CertumTotpAlgorithm.Sha256,
         "SHA512" => CertumTotpAlgorithm.Sha512,
         _ => throw new ProviderConfigurationException($"Unsupported TOTP algorithm '{value}'."),

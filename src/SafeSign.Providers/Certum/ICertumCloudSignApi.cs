@@ -10,6 +10,7 @@ namespace SafeSign.Providers.Certum;
 /// The Certum SimplySign (<c>cloudsign.webnotarius.pl</c>) REST surface for CAS OAuth 2.0 login and
 /// SCS1_ATOM asynchronous card, certificate, and digest-signing tasks.
 /// </summary>
+[Headers("User-Agent: SafeSign")]
 public interface ICertumCloudSignApi
 {
     /// <summary>Starts the CAS OAuth 2.0 authorization-code flow at <c>/idp/oauth2.0/authorize</c>.</summary>

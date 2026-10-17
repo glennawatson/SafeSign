@@ -12,4 +12,7 @@ public enum CertumTotpAlgorithm
 
     /// <summary>HMAC-SHA-512 digest algorithm.</summary>
     Sha512 = 1,
+
+    /// <summary>HMAC-SHA-1 digest algorithm.</summary>
+    Sha1 = 2,
 }

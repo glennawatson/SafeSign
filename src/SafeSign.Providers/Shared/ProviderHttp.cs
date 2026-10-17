@@ -18,6 +18,12 @@ public static class ProviderHttp
     /// <summary>The most characters of an error body quoted in an exception message.</summary>
     private const int MaxQuotedBodyLength = 512;
 
+    /// <summary>Gets the PKCS #12 key storage flags supported on the current operating system.</summary>
+    public static X509KeyStorageFlags Pkcs12StorageFlags =>
+        OperatingSystem.IsMacOS()
+            ? X509KeyStorageFlags.Exportable
+            : X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet;
+
     /// <summary>Creates <see cref="RefitSettings"/> configured with a source-generated JSON serializer context.</summary>
     /// <param name="context">The source-generated JSON serializer context.</param>
     /// <param name="baseSettings">Optional base Refit settings (for example from <c>StubHttp.ToSettings()</c>).</param>
@@ -43,7 +49,7 @@ public static class ProviderHttp
         var handlerFactory = baseSettings?.HttpMessageHandlerFactory
             ?? (clientCertFile is { Length: > 0 }
                 ? () => CreateClientCertificateHandler(clientCertFile, clientCertPassword)
-                : static () => new SocketsHttpHandler { AllowAutoRedirect = false });
+                : static () => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
         return new(serializer) { UrlResolution = UrlResolutionMode.Rfc3986, HttpMessageHandlerFactory = handlerFactory };
     }
@@ -185,8 +191,8 @@ public static class ProviderHttp
         var cert = X509CertificateLoader.LoadPkcs12FromFile(
             clientCertFile,
             clientCertPassword,
-            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
-        var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
+            Pkcs12StorageFlags);
+        var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false };
         handler.SslOptions.ClientCertificates = [cert];
         return handler;
     }
