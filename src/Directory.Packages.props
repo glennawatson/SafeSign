@@ -11,7 +11,6 @@
 
   <ItemGroup Label="Analyzers">
     <PackageVersion Include="PerformanceSharp.Analyzers" Version="$(SharpAnalyzersVersion)" />
-    <PackageVersion Include="PublicApiSharp.Analyzers" Version="2.1.0" />
     <PackageVersion Include="SecuritySharp.Analyzers" Version="$(SharpAnalyzersVersion)" />
     <PackageVersion Include="StyleSharp.Analyzers" Version="$(SharpAnalyzersVersion)" />
   </ItemGroup>
@@ -25,16 +24,16 @@
   <!-- Each target framework takes the packages of its own release: the .NET 11 packages refer to
        runtime types that only the .NET 11 runtime has. -->
   <Choose>
-    <When Condition="'$(TargetFramework)' == 'net10.0'">
+    <When Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
       <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="2.0.13" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+        <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.2.26504.105" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.2.26504.105" />
       </ItemGroup>
     </When>
     <Otherwise>
       <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.2.26504.105" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.2.26504.105" />
+        <PackageVersion Include="System.CommandLine" Version="2.0.13" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
       </ItemGroup>
     </Otherwise>
   </Choose>

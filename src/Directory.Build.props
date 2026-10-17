@@ -41,9 +41,13 @@
     <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
     <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
 
-    <!-- Only the tool project opts back in. -->
+    <!-- Packable libraries and the tool project opt back in. -->
     <IsPackable>false</IsPackable>
     <IsPublishable>false</IsPublishable>
+
+    <!-- .NET 11 packages such as System.Security.Cryptography.Pkcs ship as RC under the go-live licence, so a stable
+         pack of a net11-targeting package trips NU5104. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
 
     <IsTestProject>$(MSBuildProjectName.Contains('Tests'))</IsTestProject>
   </PropertyGroup>
@@ -82,19 +86,9 @@
 
   <ItemGroup>
     <PackageReference Include="MinVer" PrivateAssets="all" />
-    <PackageReference Include="PublicApiSharp.Analyzers" PrivateAssets="all" />
-  </ItemGroup>
-
-  <!-- A project referencing the package it produces is a restore cycle, so it skips its own. -->
-  <PropertyGroup>
-    <SelfAnalyze Condition="'$(SelfAnalyze)' == ''">true</SelfAnalyze>
-    <OwnPackageId Condition="$(MSBuildProjectName.EndsWith('.Analyzers')) Or $(MSBuildProjectName.EndsWith('.Analyzers.Packages'))">$(MSBuildProjectName.Replace('.Packages', ''))</OwnPackageId>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(SelfAnalyze)' == 'true'">
-    <PackageReference Include="StyleSharp.Analyzers" PrivateAssets="all" Condition="'$(OwnPackageId)' != 'StyleSharp.Analyzers'" />
-    <PackageReference Include="PerformanceSharp.Analyzers" PrivateAssets="all" Condition="'$(OwnPackageId)' != 'PerformanceSharp.Analyzers'" />
-    <PackageReference Include="SecuritySharp.Analyzers" PrivateAssets="all" Condition="'$(OwnPackageId)' != 'SecuritySharp.Analyzers'" />
+    <PackageReference Include="StyleSharp.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="PerformanceSharp.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="SecuritySharp.Analyzers" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- Drop SDK generators whose trigger attribute this codebase never uses; re-enable one the
@@ -107,19 +101,6 @@
                         or '%(Filename)' == 'Microsoft.Interop.VtableIndexStubGenerator'
                         or '%(Filename)' == 'Microsoft.Interop.JavaScript.JSImportGenerator'
                         or '%(Filename)' == 'Microsoft.Interop.LibraryImportGenerator'" />
-    </ItemGroup>
-  </Target>
-
-  <!-- The analyzer-authoring rules only apply to projects that ship analyzers. Excluding the
-       package assets does not work here: transitive pinning re-promotes them, so drop them from
-       the compiler invocation instead. -->
-  <Target Name="RemoveAnalyzerAuthoringRules"
-          BeforeTargets="CoreCompile"
-          Condition="'$(EnforceExtendedAnalyzerRules)' != 'true'">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer)"
-                Condition="'%(Filename)' == 'Microsoft.CodeAnalysis.Analyzers'
-                        or '%(Filename)' == 'Microsoft.CodeAnalysis.CSharp.Analyzers'" />
     </ItemGroup>
   </Target>
 </Project>
