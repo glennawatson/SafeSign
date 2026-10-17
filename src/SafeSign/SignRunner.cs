@@ -54,7 +54,7 @@ public static class SignRunner
             return ExitFailure;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException
-            or FileNotFoundException or CryptographicException or HttpRequestException or ApiException
+            or IOException or FormatException or CryptographicException or HttpRequestException or ApiException
             or ProviderConfigurationException or ProviderRequestException)
         {
             await error.WriteLineAsync($"error: {ex.Message}".AsMemory(), CancellationToken.None).ConfigureAwait(false);
