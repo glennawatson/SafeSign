@@ -3,12 +3,24 @@
 // See the LICENSE file in the project root for full license information.
 
 using Refit;
+using SafeSign.Providers.Csc;
 
 namespace SafeSign.Providers.SslCom;
 
 /// <summary>Refit client for the SSL.com eSigner Cloud Signature Consortium (CSC) v0 API.</summary>
 public interface ISslComESignerApi
 {
+    /// <summary>Authorizes a signing operation and exchanges an OTP for a SAD token via <c>POST /csc/v0/credentials/authorize</c>.</summary>
+    /// <param name="authorization">The <c>Bearer &lt;token&gt;</c> header.</param>
+    /// <param name="request">The CSC <c>credentials/authorize</c> request body.</param>
+    /// <param name="cancellationToken">Cancels the HTTP request.</param>
+    /// <returns>The CSC <c>credentials/authorize</c> response containing the SAD token.</returns>
+    [Post("/csc/v0/credentials/authorize")]
+    Task<IApiResponse<CscAuthorizeReply>> AuthorizeAsync(
+        [Header("Authorization")] string authorization,
+        [Body] CscAuthorizeRequest request,
+        CancellationToken cancellationToken);
+
     /// <summary>Signs one or more precomputed digests via <c>POST /csc/v0/signatures/signHash</c>.</summary>
     /// <param name="authorization">The <c>Bearer &lt;token&gt;</c> header.</param>
     /// <param name="request">The CSC <c>signHash</c> request body.</param>

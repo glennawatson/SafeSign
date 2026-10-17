@@ -12,5 +12,5 @@ namespace SafeSign.Providers.SignServer;
 /// <param name="UsingCliSuppliedHashDigestAlgorithm">The digest algorithm name when <paramref name="ClientSideHashing"/> is <c>true</c>.</param>
 [DebuggerDisplay("ClientSideHashing = {ClientSideHashing}, Alg = {UsingCliSuppliedHashDigestAlgorithm}")]
 public sealed record SignServerMetaData(
-    [property: JsonPropertyName("CLIENTSIDEHASHING")] string ClientSideHashing,
-    [property: JsonPropertyName("USING_CLIENTSUPPLIED_HASH_DIGESTALGORITHM")] string UsingCliSuppliedHashDigestAlgorithm);
+    [property: JsonPropertyName("USING_CLIENTSUPPLIED_HASH")] string ClientSideHashing,
+    [property: JsonPropertyName("CLIENTSIDE_HASHDIGESTALGORITHM")] string UsingCliSuppliedHashDigestAlgorithm);

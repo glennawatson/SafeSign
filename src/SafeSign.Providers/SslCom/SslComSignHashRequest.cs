@@ -16,5 +16,5 @@ namespace SafeSign.Providers.SslCom;
 public sealed record SslComSignHashRequest(
     [property: JsonPropertyName("credentialID")] string CredentialId,
     [property: JsonPropertyName("SAD")] string Sad,
-    [property: JsonPropertyName("hashes")] string[] Hashes,
+    [property: JsonPropertyName("hash")] string[] Hashes,
     [property: JsonPropertyName("signAlgo")] string SignAlgo);

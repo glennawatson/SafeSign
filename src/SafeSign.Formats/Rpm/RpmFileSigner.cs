@@ -13,8 +13,8 @@ namespace SafeSign.Formats.Rpm;
 
 /// <summary>
 /// Signs Red Hat Package Manager (<c>.rpm</c>) archives natively with IMA v2 file signatures
-/// (<c>RPMTAG_FILESIGNATURES</c> <c>5090</c> and <c>RPMTAG_FILESIGNATURELENGTH</c> <c>5091</c>)
-/// and recomputes the Signature Header digests (<c>SHA256</c>, <c>SHA1</c>, <c>MD5</c>, <c>SIZE</c>).
+/// (<c>RPMSIGTAG_FILESIGNATURES</c> <c>274</c> and <c>RPMSIGTAG_FILESIGNATURELENGTH</c> <c>275</c>)
+/// in the Signature Header while preserving the immutable Main Header byte-for-byte.
 /// </summary>
 [DebuggerDisplay("{Name,nq}")]
 public sealed class RpmFileSigner : IFileFormatSigner
@@ -22,11 +22,11 @@ public sealed class RpmFileSigner : IFileFormatSigner
     /// <summary>The file digests tag (<c>RPMTAG_FILEDIGESTS</c>).</summary>
     internal const int TagFileDigests = 1035;
 
-    /// <summary>The IMA file signatures tag (<c>RPMTAG_FILESIGNATURES</c>).</summary>
-    internal const int TagFileSignatures = 5090;
+    /// <summary>The signature header tag for IMA file signatures (<c>RPMSIGTAG_FILESIGNATURES</c> = <c>256 + 18</c>).</summary>
+    internal const int TagFileSignatures = 274;
 
-    /// <summary>The tag holding the longest file signature's byte length (<c>RPMTAG_FILESIGNATURELENGTH</c>).</summary>
-    internal const int TagFileSignatureLength = 5091;
+    /// <summary>The signature header tag holding the longest file signature's byte length (<c>RPMSIGTAG_FILESIGNATURELENGTH</c> = <c>256 + 19</c>).</summary>
+    internal const int TagFileSignatureLength = 275;
 
     /// <summary>The file digest algorithm tag (<c>RPMTAG_FILEDIGESTALGO</c>).</summary>
     internal const int TagFileDigestAlgo = 5011;
@@ -46,17 +46,11 @@ public sealed class RpmFileSigner : IFileFormatSigner
     /// <summary>The signature header tag for the header SHA-256.</summary>
     internal const int TagSha256 = 273;
 
-    /// <summary>The signature header tag for an OpenPGP DSA header signature.</summary>
-    private const int TagDsa = 267;
+    /// <summary>The legacy main-header tag number for file signatures (<c>RPMTAG_FILESIGNATURES</c>), removed from the signature header if present.</summary>
+    private const int LegacyTagFileSignatures = 5090;
 
-    /// <summary>The signature header tag for an OpenPGP RSA header signature.</summary>
-    private const int TagRsa = 268;
-
-    /// <summary>The signature header tag for a legacy PGP header and payload signature.</summary>
-    private const int TagPgp = 1002;
-
-    /// <summary>The signature header tag for a legacy GPG header and payload signature.</summary>
-    private const int TagGpg = 1005;
+    /// <summary>The legacy main-header tag number for file signature length (<c>RPMTAG_FILESIGNATURELENGTH</c>), removed from the signature header if present.</summary>
+    private const int LegacyTagFileSignatureLength = 5091;
 
     /// <summary>The byte length of the IMA key identifier (last 4 bytes of Subject Key Identifier).</summary>
     private const int KeyIdLength = 4;
@@ -73,19 +67,25 @@ public sealed class RpmFileSigner : IFileFormatSigner
     /// <summary>The bits in a byte, for writing the 16-bit big-endian signature size.</summary>
     private const int BitsPerByte = 8;
 
+    /// <summary>The Subject Key Identifier X.509 extension OID (<c>2.5.29.14</c>).</summary>
+    private const string SubjectKeyIdentifierOid = "2.5.29.14";
+
     /// <inheritdoc/>
     public string Name => "RPM";
 
-    /// <summary>Gets the OpenPGP signature tags that become stale when the main header is updated.</summary>
-    private static ReadOnlySpan<int> StaleSignatureTags => [TagDsa, TagRsa, TagPgp, TagGpg];
-
-    /// <summary>Computes the 4-byte IMA v2 key identifier (the last 4 bytes of the SHA-1 of the public key).</summary>
+    /// <summary>Computes the 4-byte IMA v2 key identifier (the last 4 bytes of the Subject Key Identifier extension or SHA-1 of the SubjectPublicKey).</summary>
     /// <param name="certificate">The signing certificate.</param>
     /// <returns>The 4-byte IMA key identifier.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="certificate"/> is null.</exception>
     public static byte[] ComputeKeyId(X509Certificate2 certificate)
     {
         ArgumentNullException.ThrowIfNull(certificate);
+        if (certificate.Extensions[SubjectKeyIdentifierOid] is X509SubjectKeyIdentifierExtension ski
+            && ski.SubjectKeyIdentifierBytes.Length >= KeyIdLength)
+        {
+            return ski.SubjectKeyIdentifierBytes.Span[^KeyIdLength..].ToArray();
+        }
+
         var keyHash = HashSha1(certificate.PublicKey.EncodedKeyValue.RawData);
         return keyHash[^KeyIdLength..];
     }
@@ -107,7 +107,7 @@ public sealed class RpmFileSigner : IFileFormatSigner
             cancellationToken);
     }
 
-    /// <summary>Signs all SHA-256 file digests in an RPM package and updates its headers in place.</summary>
+    /// <summary>Signs all SHA-256 file digests in an RPM package and updates its signature header in place.</summary>
     /// <param name="path">The RPM path.</param>
     /// <param name="session">The signing session.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
@@ -126,9 +126,10 @@ public sealed class RpmFileSigner : IFileFormatSigner
             + signatureLength
             + RpmHeaderCodec.Pad(signatureLength, RpmHeaderCodec.SignatureAlignment);
         var headerLength = RpmHeaderCodec.HeaderLength(file, headerStart);
+        var headerSlice = file.AsMemory(headerStart, headerLength);
         var payload = file.AsMemory(headerStart + headerLength);
         var signatureHeader = RpmHeaderCodec.ReadHeader(file.AsSpan(RpmHeaderCodec.LeadLength, signatureLength));
-        var mainHeader = RpmHeaderCodec.ReadHeader(file.AsSpan(headerStart, headerLength));
+        var mainHeader = RpmHeaderCodec.ReadHeader(headerSlice.Span);
 
         if (!mainHeader.TryGetValue(TagFileDigestAlgo, out var algo)
             || BinaryPrimitives.ReadInt32BigEndian(algo.Data.Span) != DigestAlgoSha256)
@@ -138,18 +139,27 @@ public sealed class RpmFileSigner : IFileFormatSigner
 
         var keyId = ComputeKeyId(session.Certificate.Certificate);
         var (signatures, longest) = await SignFileDigestsAsync(mainHeader, keyId, session, cancellationToken).ConfigureAwait(false);
-        mainHeader[TagFileSignatures] = RpmHeaderCodec.CreateStringArray(signatures);
-        mainHeader[TagFileSignatureLength] = RpmHeaderCodec.CreateInt32(longest);
-        var headerBytes = RpmHeaderCodec.WriteHeader(mainHeader, RpmHeaderCodec.RegionImmutable);
 
-        UpdateSignatureHeader(signatureHeader, headerBytes, payload.Span);
+        _ = signatureHeader.Remove(LegacyTagFileSignatures);
+        _ = signatureHeader.Remove(LegacyTagFileSignatureLength);
+        signatureHeader[TagFileSignatures] = RpmHeaderCodec.CreateStringArray(signatures);
+        if (longest > 0)
+        {
+            signatureHeader[TagFileSignatureLength] = RpmHeaderCodec.CreateInt32(longest);
+        }
+        else
+        {
+            _ = signatureHeader.Remove(TagFileSignatureLength);
+        }
+
+        UpdateSignatureHeader(signatureHeader, headerSlice.Span, payload.Span);
         var signatureBytes = RpmHeaderCodec.WriteHeader(signatureHeader, RpmHeaderCodec.RegionSignatures);
         var paddingBytes = new byte[RpmHeaderCodec.Pad(signatureBytes.Length, RpmHeaderCodec.SignatureAlignment)];
 
         using var handle = File.OpenHandle(path, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.Asynchronous);
         await RandomAccess.WriteAsync(
             handle,
-            [file.AsMemory(0, RpmHeaderCodec.LeadLength), signatureBytes, paddingBytes, headerBytes, payload],
+            [file.AsMemory(0, RpmHeaderCodec.LeadLength), signatureBytes, paddingBytes, headerSlice, payload],
             fileOffset: 0,
             cancellationToken).ConfigureAwait(false);
     }
@@ -205,7 +215,7 @@ public sealed class RpmFileSigner : IFileFormatSigner
         return (signatures, longest);
     }
 
-    /// <summary>Removes stale OpenPGP header signatures and recomputes the Signature Header digests and size.</summary>
+    /// <summary>Recomputes the Signature Header digests and size over the untouched main header and payload.</summary>
     /// <param name="signatureHeader">The parsed signature header.</param>
     /// <param name="headerBytes">The serialized main header bytes.</param>
     /// <param name="payload">The compressed CPIO payload bytes.</param>
@@ -214,11 +224,6 @@ public sealed class RpmFileSigner : IFileFormatSigner
         ReadOnlySpan<byte> headerBytes,
         ReadOnlySpan<byte> payload)
     {
-        foreach (var stale in StaleSignatureTags)
-        {
-            _ = signatureHeader.Remove(stale);
-        }
-
         signatureHeader[TagSha256] = RpmHeaderCodec.CreateString(Convert.ToHexStringLower(SHA256.HashData(headerBytes)));
         if (signatureHeader.ContainsKey(TagSha1))
         {

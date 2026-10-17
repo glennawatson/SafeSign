@@ -245,7 +245,7 @@ public sealed class SafeSignCliTests
         await File.WriteAllBytesAsync(pfxPath, cert.Export(X509ContentType.Pfx, password));
 
         _ = ScriptFileSigner.TryGetFormat(".vbs", out var vbsFormat);
-        var fileDigest = SHA384.HashData(Encoding.Unicode.GetBytes(scriptContent));
+        var fileDigest = SHA384.HashData([.. Encoding.Unicode.GetBytes(scriptContent), .. BitConverter.GetBytes(scriptContent.Length)]);
         var provider = new LocalCertificateProvider(new(pfxPath, password));
         var signingCert = await provider.GetCertificateAsync(CancellationToken.None);
         var session = new SigningSession(provider, signingCert, HashAlgorithmName.SHA384, null, null, null, TimeProvider.System);

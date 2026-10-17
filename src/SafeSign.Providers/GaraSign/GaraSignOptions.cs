@@ -15,7 +15,7 @@ public sealed record GaraSignOptions(string KeyName)
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>The default timeout for an asynchronous signing operation.</summary>
-    private static readonly TimeSpan DefaultPollTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultPollTimeout = TimeSpan.FromHours(1);
 
     /// <summary>Gets the default Garantir GaraSign REST endpoint URI.</summary>
     public static Uri DefaultEndpoint { get; } = new("https://garasign.com:8443/CodeSigningRestService");

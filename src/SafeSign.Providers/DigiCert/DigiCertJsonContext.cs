@@ -15,6 +15,7 @@ namespace SafeSign.Providers.DigiCert;
 [JsonSerializable(typeof(DigiCertChainItem))]
 [JsonSerializable(typeof(DigiCertCertificateItem))]
 [JsonSerializable(typeof(DigiCertCertificatesReply))]
+[JsonSerializable(typeof(DigiCertKeypairDetailReply))]
 [JsonSerializable(typeof(DigiCertSignPayload))]
 [JsonSerializable(typeof(DigiCertSignReply))]
 public sealed partial class DigiCertJsonContext : JsonSerializerContext;

@@ -19,7 +19,7 @@ public sealed class SslComESignerProvider(
     ProviderRetryOptions? retry = null) : ISigningProvider
 {
     /// <summary>The default SSL.com eSigner OAuth 2.0 client ID.</summary>
-    private const string DefaultClientId = "kaXTRACN8SWsFdR";
+    private const string DefaultClientId = "kaXTRACNijSWsFdRKg_KAfD3fqrBlzMbWs6TwWHwAn8";
 
     /// <summary>The option and form key for the password.</summary>
     private const string PasswordKey = "password";

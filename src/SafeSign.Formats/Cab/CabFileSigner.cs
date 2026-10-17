@@ -14,8 +14,8 @@ namespace SafeSign.Formats.Cab;
 
 /// <summary>
 /// Signs Microsoft Cabinet (<c>.cab</c>) archives natively by setting <c>cfhdrRESERVE_PRESENT</c> (<c>0x0004</c>),
-/// writing the 20-byte Authenticode cabinet reserve header, adjusting folder and file offsets, and appending the
-/// PKCS #7 <c>SignedData</c> structure.
+/// writing the 24-byte Authenticode cabinet reserve header (<c>cbCFHeader = 20</c>), adjusting folder and file offsets,
+/// and appending the 8-byte-aligned PKCS #7 <c>SignedData</c> structure.
 /// </summary>
 [DebuggerDisplay("{Name,nq}")]
 public sealed class CabFileSigner : IFileFormatSigner
@@ -38,11 +38,20 @@ public sealed class CabFileSigner : IFileFormatSigner
     /// <summary>The size of the <c>cbCFHeader</c>/<c>cbCFFolder</c>/<c>cbCFData</c> descriptor field.</summary>
     private const int ReserveSizesFieldLength = 4;
 
-    /// <summary>The 16-byte Authenticode <c>abReserve</c> payload length (<c>0x0010</c>).</summary>
-    private const ushort CabReservePayloadSize = 16;
+    /// <summary>The 20-byte Authenticode <c>abReserve</c> payload length (<c>0x0014</c>).</summary>
+    private const ushort CabReservePayloadSize = 20;
 
-    /// <summary>The total bytes added to <c>CFHEADER</c> when enabling the Authenticode reserve area (4 + 16 = 20).</summary>
+    /// <summary>The total bytes added to <c>CFHEADER</c> when enabling the Authenticode reserve area (4 + 20 = 24).</summary>
     private const int TotalReserveAddition = ReserveSizesFieldLength + CabReservePayloadSize;
+
+    /// <summary>The 32-bit little-endian header value at the start of <c>abReserve</c> (<c>00 00 10 00</c>).</summary>
+    private const uint ReserveHeaderMagic = 0x00100000U;
+
+    /// <summary>The byte alignment of the appended Authenticode PKCS #7 signature.</summary>
+    private const int SignatureAlignment = 8;
+
+    /// <summary>The number of trailing bytes in <c>abReserve</c> included in the Authenticode digest (bytes 56..59).</summary>
+    private const int TrailingReserveHashBytes = 4;
 
     /// <summary>The offset of <c>cbCabinet</c> in <c>CFHEADER</c>.</summary>
     private const int OffsetCbCabinet = 8;
@@ -55,6 +64,9 @@ public sealed class CabFileSigner : IFileFormatSigner
 
     /// <summary>The offset of <c>flags</c> in <c>CFHEADER</c>.</summary>
     private const int OffsetFlags = 30;
+
+    /// <summary>The offset of <c>iCabinet</c> in <c>CFHEADER</c> (skipped by the Authenticode digest).</summary>
+    private const int OffsetICabinet = 34;
 
     /// <summary>The <c>SpcLink</c> context-specific choice tag for a file link.</summary>
     private const int SpcLinkFileTag = 2;
@@ -104,20 +116,21 @@ public sealed class CabFileSigner : IFileFormatSigner
             new(SpcCabDataOid, EncodeCabDataValue(), digest),
             cancellationToken).ConfigureAwait(false);
 
+        var padding = (SignatureAlignment - (signature.Length % SignatureAlignment)) % SignatureAlignment;
+        var paddedSigLength = signature.Length + padding;
         var sigOffset = (uint)prepared.Length;
-        var sigLength = (uint)signature.Length;
         BinaryPrimitives.WriteUInt32LittleEndian(prepared.AsSpan(BaseHeaderSize + ReserveSizesFieldLength + sizeof(uint)), sigOffset);
-        BinaryPrimitives.WriteUInt32LittleEndian(prepared.AsSpan(BaseHeaderSize + ReserveSizesFieldLength + sizeof(ulong)), sigLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(prepared.AsSpan(BaseHeaderSize + ReserveSizesFieldLength + sizeof(ulong)), (uint)paddedSigLength);
 
-        var output = new byte[prepared.Length + signature.Length];
+        var output = new byte[prepared.Length + paddedSigLength];
         prepared.CopyTo(output, 0);
         signature.CopyTo(output, prepared.Length);
         await File.WriteAllBytesAsync(path, output, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Ensures the cabinet has the 20-byte Authenticode reserve block and strips any trailing signature.</summary>
+    /// <summary>Ensures the cabinet has the 24-byte Authenticode reserve block and strips any trailing signature.</summary>
     /// <param name="cab">The input cabinet bytes.</param>
-    /// <returns>The unsigned cabinet bytes with the 20-byte reserve header in place.</returns>
+    /// <returns>The unsigned cabinet bytes with the 24-byte reserve header in place.</returns>
     /// <exception cref="InvalidDataException">The cabinet header is malformed or uses unsupported multi-cabinet chaining.</exception>
     private static byte[] PrepareUnsignedWithReserve(ReadOnlySpan<byte> cab)
     {
@@ -153,6 +166,7 @@ public sealed class CabFileSigner : IFileFormatSigner
 
             var stripped = cab[..(int)cabinetSize].ToArray();
             stripped.AsSpan(BaseHeaderSize + ReserveSizesFieldLength, CabReservePayloadSize).Clear();
+            BinaryPrimitives.WriteUInt32LittleEndian(stripped.AsSpan(BaseHeaderSize + ReserveSizesFieldLength), ReserveHeaderMagic);
             return stripped;
         }
 
@@ -160,6 +174,7 @@ public sealed class CabFileSigner : IFileFormatSigner
         var expanded = new byte[unsignedSlice.Length + TotalReserveAddition];
         unsignedSlice[..BaseHeaderSize].CopyTo(expanded);
         BinaryPrimitives.WriteUInt16LittleEndian(expanded.AsSpan(BaseHeaderSize), CabReservePayloadSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(expanded.AsSpan(BaseHeaderSize + ReserveSizesFieldLength), ReserveHeaderMagic);
         unsignedSlice[BaseHeaderSize..].CopyTo(expanded.AsSpan(BaseHeaderSize + TotalReserveAddition));
 
         var newCabinetSize = (uint)expanded.Length;
@@ -179,7 +194,7 @@ public sealed class CabFileSigner : IFileFormatSigner
         return expanded;
     }
 
-    /// <summary>Computes the Authenticode digest over a cabinet with its 20-byte reserve header.</summary>
+    /// <summary>Computes the Authenticode digest over a cabinet with its 24-byte reserve header.</summary>
     /// <param name="cab">The cabinet bytes up to <c>cbCabinet</c>.</param>
     /// <param name="algorithm">The digest algorithm.</param>
     /// <returns>The Authenticode digest.</returns>
@@ -187,11 +202,12 @@ public sealed class CabFileSigner : IFileFormatSigner
     {
         using var hash = IncrementalHash.CreateHash(algorithm);
 
-        // Authenticode CAB hashing skips reserved1 (bytes 4..7) and the 20-byte reserve block (bytes 36..55),
-        // while including the 2-byte zeroed abReserve prefix (bytes 40..41).
+        // Authenticode CAB hashing hashes MSCF (0..3), skips reserved1 (4..7), hashes cbCabinet..setID (8..33),
+        // skips iCabinet (34..35) and the reserve header through byte 55 (36..55), hashes the last 4 bytes of
+        // abReserve (56..59), and hashes the remaining folders, files, and data blocks (60..cbCabinet).
         hash.AppendData(cab[..SignatureMagicLength]);
-        hash.AppendData(cab.Slice(OffsetCbCabinet, BaseHeaderSize - OffsetCbCabinet));
-        hash.AppendData(cab.Slice(BaseHeaderSize + ReserveSizesFieldLength, sizeof(ushort)));
+        hash.AppendData(cab.Slice(OffsetCbCabinet, OffsetICabinet - OffsetCbCabinet));
+        hash.AppendData(cab.Slice(BaseHeaderSize + TotalReserveAddition - TrailingReserveHashBytes, TrailingReserveHashBytes));
         hash.AppendData(cab[(BaseHeaderSize + TotalReserveAddition)..]);
         return hash.GetHashAndReset();
     }

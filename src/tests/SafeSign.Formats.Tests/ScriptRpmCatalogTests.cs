@@ -59,18 +59,22 @@ public sealed class ScriptRpmCatalogTests
             await signer.SignAsync(new(vbsPath, vbsPath, session), CancellationToken.None);
             var signedVbs = await File.ReadAllTextAsync(vbsPath, Encoding.Unicode);
             await Assert.That(signedVbs).Contains("'' SIG '' Begin signature block");
+            await Assert.That(signedVbs).Contains("'' SIG '' MII");
 
             var jsPath = Path.Combine(tempDir.FullName, "script.js");
             await File.WriteAllTextAsync(jsPath, "WScript.Echo('SafeSign');\r\n");
             await signer.SignAsync(new(jsPath, jsPath, session), CancellationToken.None);
             var signedJs = await File.ReadAllTextAsync(jsPath);
             await Assert.That(signedJs).Contains("// SIG // Begin signature block");
+            await Assert.That(signedJs).Contains("// SIG // MII");
 
             var wsfPath = Path.Combine(tempDir.FullName, "job.wsf");
             await File.WriteAllTextAsync(wsfPath, "<job><script language=\"VBScript\">WScript.Quit 0</script></job>\r\n");
             await signer.SignAsync(new(wsfPath, wsfPath, session), CancellationToken.None);
             var signedWsf = await File.ReadAllTextAsync(wsfPath);
-            await Assert.That(signedWsf).Contains("<!-- SIG # Begin signature block -->");
+            await Assert.That(signedWsf).Contains("<signature>");
+            await Assert.That(signedWsf).Contains("** SIG ** MII");
+            await Assert.That(signedWsf).Contains("</signature>\r\n</job>");
         }
         finally
         {
@@ -78,7 +82,7 @@ public sealed class ScriptRpmCatalogTests
         }
     }
 
-    /// <summary>Verifies that <see cref="RpmFileSigner"/> signs SHA-256 file digests into IMA v2 <c>RPMTAG_FILESIGNATURES</c> and updates the Signature Header.</summary>
+    /// <summary>Verifies that <see cref="RpmFileSigner"/> signs SHA-256 file digests into IMA v2 <c>RPMSIGTAG_FILESIGNATURES</c> in the Signature Header while preserving the Main Header.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
     public async Task RpmFileSigner_WritesImaV2FileSignaturesAndUpdatesSignatureHeaderDigests()
@@ -105,12 +109,13 @@ public sealed class ScriptRpmCatalogTests
             var sigHeader = RpmHeaderCodec.ReadHeader(signedRpm.AsSpan(RpmHeaderCodec.LeadLength, sigHeaderLen));
             var mainHeader = RpmHeaderCodec.ReadHeader(signedRpm.AsSpan(mainStart, mainLen));
 
-            await Assert.That(mainHeader.ContainsKey(RpmFileSigner.TagFileSignatures)).IsTrue();
-            await Assert.That(mainHeader.ContainsKey(RpmFileSigner.TagFileSignatureLength)).IsTrue();
+            await Assert.That(sigHeader.ContainsKey(RpmFileSigner.TagFileSignatures)).IsTrue();
+            await Assert.That(sigHeader.ContainsKey(RpmFileSigner.TagFileSignatureLength)).IsTrue();
             await Assert.That(sigHeader.ContainsKey(RpmFileSigner.TagSha256)).IsTrue();
             await Assert.That(sigHeader.ContainsKey(RpmFileSigner.TagSize)).IsTrue();
+            await Assert.That(mainHeader.ContainsKey(RpmFileSigner.TagFileDigests)).IsTrue();
 
-            var fileSigs = RpmHeaderCodec.DecodeStrings(mainHeader[RpmFileSigner.TagFileSignatures]);
+            var fileSigs = RpmHeaderCodec.DecodeStrings(sigHeader[RpmFileSigner.TagFileSignatures]);
             await Assert.That(fileSigs.Length).IsEqualTo(ExpectedRpmFileCount);
             await Assert.That(fileSigs[1]).IsEqualTo(string.Empty);
 

@@ -63,7 +63,9 @@ public sealed class EnterpriseProviderTests
         {
             {
                 Route.Get("/signingmanager/api/v1/certificates"),
-                Reply.Json($$$"""{"items":[{"id":"cert-1","alias":"prod-cert","cert":"{{{certBase64}}}","account":{"id":"acct-1"},"keypair":{"id":"kp-99"}}]}""")
+                Reply.Json(
+                    $$$"""{"items":[{"id":"cert-old","alias":"prod-cert","status":"EXPIRED","cert":"{{{certBase64}}}","account":{"id":"acct-old"},"keypair":{"id":"kp-old"}},"""
+                    + $$$"""{"id":"cert-1","alias":"prod-cert","status":"ACTIVE","cert":"{{{certBase64}}}","account":{"id":"acct-1"},"keypair":{"id":"kp-99"}}]}""")
             },
             {
                 Route.Post("/signingmanager/api/v1/keypairs/kp-99/sign"),
@@ -106,7 +108,7 @@ public sealed class EnterpriseProviderTests
             },
             {
                 Route.Post("/api/signing/sign/"),
-                Reply.Text($"\"{sigHex}\"")
+                Reply.Json($$"""{"result":"{{sigHex}}","status":"SUCCESS"}""")
             },
         };
 

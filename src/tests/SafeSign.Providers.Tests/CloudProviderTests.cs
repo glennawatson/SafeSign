@@ -31,6 +31,9 @@ public sealed class CloudProviderTests
     /// <summary>The random secret length in bytes.</summary>
     private const int RandomSecretBytes = 16;
 
+    /// <summary>The SSL.com eSigner CSC authorize route.</summary>
+    private const string SslComAuthorizeRoute = "/csc/v0/credentials/authorize";
+
     /// <summary>The SSL.com eSigner CSC signHash route.</summary>
     private const string SslComSignHashRoute = "/csc/v0/signatures/signHash";
 
@@ -365,10 +368,14 @@ public sealed class CloudProviderTests
             var digest = SHA256.HashData("SSL.com eSigner payload"u8);
             var expectedSig = rsa.SignHash(digest, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
-            using var http = new StubHttp { { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{Convert.ToBase64String(expectedSig)}}"]}""") } };
+            using var http = new StubHttp
+            {
+                { Route.Post(SslComAuthorizeRoute), Reply.Json("""{"SAD":"esigner-sad-1"}""") },
+                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{Convert.ToBase64String(expectedSig)}}"]}""") },
+            };
 
             var accessToken = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(RandomSecretBytes));
-            var totpSecret = GetTestBase32TotpSecret();
+            var totpSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(RandomSecretBytes));
             var options = new SslComESignerOptions(
                 "cred-id-1",
                 certPath,
@@ -418,14 +425,18 @@ public sealed class CloudProviderTests
             var digest384 = SHA384.HashData("SSL.com EC384"u8);
             var digest512 = SHA512.HashData("SSL.com EC512"u8);
             var digest256 = SHA256.HashData("SSL.com EC256"u8);
-            var sigBase64 = Convert.ToBase64String(ecdsa.SignHash(digest384));
+            var sigReply = Reply.Json($$"""{"signatures":["{{Convert.ToBase64String(ecdsa.SignHash(digest384))}}"]}""");
+            var sadReply = Reply.Json("""{"SAD":"esigner-sad-ec"}""");
 
             using var http = new StubHttp
             {
                 { Route.Post("/oauth2/token"), Reply.Json("""{"access_token":"ssl-oauth-tok","expires_in":3600}""") },
-                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
-                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
-                { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(SslComAuthorizeRoute), sadReply },
+                { Route.Post(SslComSignHashRoute), sigReply },
+                { Route.Post(SslComAuthorizeRoute), sadReply },
+                { Route.Post(SslComSignHashRoute), sigReply },
+                { Route.Post(SslComAuthorizeRoute), sadReply },
+                { Route.Post(SslComSignHashRoute), sigReply },
             };
 
             Dictionary<string, string> opts = new(StringComparer.OrdinalIgnoreCase)
@@ -435,19 +446,14 @@ public sealed class CloudProviderTests
                 ["username"] = "ssl-user",
                 ["password"] = pfxPassword,
                 ["otp"] = $"otpauth://totp/SSL:user?secret={GetTestBase32TotpSecret()}",
-                ["endpoint"] = "https://ds.ssl.com",
+                ["endpoint"] = "https://cs.ssl.com",
                 ["token-endpoint"] = "https://login.ssl.com/oauth2/token",
             };
-            var settings = new ProviderSettings(opts, static _ => null);
-            var provider = SslComESignerProvider.FromSettings(settings, new(http.ToSettings(), TimeProvider.System));
+            var provider = SslComESignerProvider.FromSettings(new(opts, static _ => null), new(http.ToSettings(), TimeProvider.System));
             await Assert.That(provider.Name).IsEqualTo("sslcom-esigner");
-
-            var s1 = await provider.SignDigestAsync(new(digest384, HashAlgorithmName.SHA384), CancellationToken.None);
-            var s2 = await provider.SignDigestAsync(new(digest512, HashAlgorithmName.SHA512), CancellationToken.None);
-            var s3 = await provider.SignDigestAsync(new(digest256, HashAlgorithmName.SHA256), CancellationToken.None);
-            await Assert.That(s1.Length).IsGreaterThan(0);
-            await Assert.That(s2.Length).IsGreaterThan(0);
-            await Assert.That(s3.Length).IsGreaterThan(0);
+            await Assert.That((await provider.SignDigestAsync(new(digest384, HashAlgorithmName.SHA384), CancellationToken.None)).Length).IsGreaterThan(0);
+            await Assert.That((await provider.SignDigestAsync(new(digest512, HashAlgorithmName.SHA512), CancellationToken.None)).Length).IsGreaterThan(0);
+            await Assert.That((await provider.SignDigestAsync(new(digest256, HashAlgorithmName.SHA256), CancellationToken.None)).Length).IsGreaterThan(0);
         }
         finally
         {
@@ -476,7 +482,9 @@ public sealed class CloudProviderTests
 
             using var http = new StubHttp
             {
+                { Route.Post(SslComAuthorizeRoute), Reply.Json("""{"SAD":"esigner-sad-rsa-1"}""") },
                 { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
+                { Route.Post(SslComAuthorizeRoute), Reply.Json("""{"SAD":"esigner-sad-rsa-2"}""") },
                 { Route.Post(SslComSignHashRoute), Reply.Json($$"""{"signatures":["{{sigBase64}}"]}""") },
             };
 

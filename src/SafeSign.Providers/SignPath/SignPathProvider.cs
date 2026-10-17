@@ -20,6 +20,9 @@ namespace SafeSign.Providers.SignPath;
 [DebuggerDisplay("{Name,nq}")]
 public sealed class SignPathProvider : ISigningProvider
 {
+    /// <summary>The ASN.1 DER SEQUENCE tag byte.</summary>
+    private const byte Asn1SequenceTag = 0x30;
+
     /// <summary>The Refit transport settings.</summary>
     private readonly RefitSettings _http;
 
@@ -126,9 +129,15 @@ public sealed class SignPathProvider : ISigningProvider
             _time,
             cancellationToken).ConfigureAwait(false);
         var reply = ProviderHttp.Unwrap(response, $"POST {_options.Endpoint}/{path}");
-        return reply.Signature is { Length: > 0 } sigBase64
-            ? Convert.FromBase64String(sigBase64)
-            : throw new ProviderRequestException("SignPath returned no signature.");
+        if (reply.Signature is not { Length: > 0 } sigBase64)
+        {
+            throw new ProviderRequestException("SignPath returned no signature.");
+        }
+
+        var rawSig = Convert.FromBase64String(sigBase64);
+        return kind == PublicKeyKind.Ecdsa && rawSig.Length > 0 && rawSig[0] != Asn1SequenceTag
+            ? EcdsaSignatureEncoding.IeeeP1363ToDer(rawSig)
+            : rawSig;
     }
 
     /// <summary>Combines the base path of <see cref="SignPathOptions.Endpoint"/> with a relative route.</summary>

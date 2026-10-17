@@ -405,3 +405,4 @@ todo_docs/
 
 # Local agent configuration, hooks, and worktrees
 .claude/
+.winverify-scratch/

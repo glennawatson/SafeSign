@@ -14,4 +14,5 @@ namespace SafeSign.Providers.EncryptionConsulting;
 [JsonSerializable(typeof(CodeSignSecureLoginReply))]
 [JsonSerializable(typeof(CodeSignSecureCertReply))]
 [JsonSerializable(typeof(CodeSignSecureSignPayload))]
+[JsonSerializable(typeof(CodeSignSecureSignReply))]
 public sealed partial class CodeSignSecureJsonContext : JsonSerializerContext;

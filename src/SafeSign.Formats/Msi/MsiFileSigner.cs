@@ -5,6 +5,7 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using SafeSign.Formats.CompoundFile;
 using SafeSign.Signing;
@@ -29,14 +30,26 @@ public sealed class MsiFileSigner : IFileFormatSigner
     /// <summary>The byte length of a GUID.</summary>
     private const int GuidByteLength = 16;
 
-    /// <summary>The byte length of the storage metadata block hashed by <c>\x05MsiDigitalSignatureEx</c>.</summary>
-    private const int MetadataBlockLength = 36;
+    /// <summary>The byte length of the root storage metadata block (<c>clsid</c> + <c>stateBits</c> = 20 bytes).</summary>
+    private const int RootMetadataBlockLength = 20;
 
-    /// <summary>The offset of the creation time within the 36-byte metadata block.</summary>
-    private const int MetadataCreatedOffset = 20;
+    /// <summary>The byte length of a sub-storage metadata block (<c>clsid</c> + <c>stateBits</c> + <c>ctime</c> + <c>mtime</c> = 36 bytes).</summary>
+    private const int StorageMetadataBlockLength = 36;
 
-    /// <summary>The offset of the modified time within the 36-byte metadata block.</summary>
-    private const int MetadataModifiedOffset = 28;
+    /// <summary>The byte length of a stream metadata block (<c>size</c> + <c>stateBits</c> + <c>ctime</c> + <c>mtime</c> = 24 bytes).</summary>
+    private const int StreamMetadataBlockLength = 24;
+
+    /// <summary>The offset of the creation time within a 36-byte storage metadata block.</summary>
+    private const int StorageMetadataCreatedOffset = 20;
+
+    /// <summary>The offset of the modified time within a 36-byte storage metadata block.</summary>
+    private const int StorageMetadataModifiedOffset = 28;
+
+    /// <summary>The offset of the creation time within a 24-byte stream metadata block.</summary>
+    private const int StreamMetadataCreatedOffset = 8;
+
+    /// <summary>The offset of the modified time within a 24-byte stream metadata block.</summary>
+    private const int StreamMetadataModifiedOffset = 16;
 
     /// <summary>The Windows Installer Subject Interface Package unique identifier.</summary>
     private static readonly Guid MsiSipGuid = new("000C10F1-0000-0000-C000-000000000046");
@@ -109,6 +122,14 @@ public sealed class MsiFileSigner : IFileFormatSigner
         }
     }
 
+    /// <summary>Compares two MSI stream/storage names by unsigned UTF-16LE byte order as required by the MSI SIP digest.</summary>
+    /// <param name="left">The first entry name.</param>
+    /// <param name="right">The second entry name.</param>
+    /// <returns>A signed integer indicating the relative order of <paramref name="left"/> and <paramref name="right"/>.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CompareStreamNamesForHash(string left, string right) =>
+        MemoryMarshal.AsBytes(left.AsSpan()).SequenceCompareTo(MemoryMarshal.AsBytes(right.AsSpan()));
+
     /// <summary>Computes the <c>\x05MsiDigitalSignatureEx</c> pre-hash over storage/stream metadata.</summary>
     /// <param name="root">The root storage.</param>
     /// <param name="algorithm">The digest algorithm.</param>
@@ -120,7 +141,7 @@ public sealed class MsiFileSigner : IFileFormatSigner
         return hash.GetHashAndReset();
     }
 
-    /// <summary>Recursively hashes entry names and metadata in <see cref="CompoundFileFormat.CompareNames"/> order for <c>\x05MsiDigitalSignatureEx</c>.</summary>
+    /// <summary>Recursively hashes entry names and metadata in unsigned UTF-16LE byte order for <c>\x05MsiDigitalSignatureEx</c>.</summary>
     /// <param name="hash">The incremental hash.</param>
     /// <param name="entry">The entry.</param>
     /// <param name="isRoot">True for the root storage.</param>
@@ -141,20 +162,28 @@ public sealed class MsiFileSigner : IFileFormatSigner
 
         if (entry.Children is { } children)
         {
-            Span<byte> meta = stackalloc byte[MetadataBlockLength];
-            _ = entry.Metadata.Clsid.TryWriteBytes(meta[..GuidByteLength]);
-            BinaryPrimitives.WriteUInt32LittleEndian(meta[GuidByteLength..], entry.Metadata.StateBits);
-            BinaryPrimitives.WriteInt64LittleEndian(meta[MetadataCreatedOffset..], entry.Metadata.CreationTime);
-            BinaryPrimitives.WriteInt64LittleEndian(meta[MetadataModifiedOffset..], entry.Metadata.ModifiedTime);
-            hash.AppendData(meta);
+            Span<byte> storageMeta = stackalloc byte[StorageMetadataBlockLength];
+            _ = entry.Metadata.Clsid.TryWriteBytes(storageMeta[..GuidByteLength]);
+            BinaryPrimitives.WriteUInt32LittleEndian(storageMeta[GuidByteLength..], entry.Metadata.StateBits);
+            if (isRoot)
+            {
+                hash.AppendData(storageMeta[..RootMetadataBlockLength]);
+            }
+            else
+            {
+                BinaryPrimitives.WriteInt64LittleEndian(storageMeta[StorageMetadataCreatedOffset..], entry.Metadata.CreationTime);
+                BinaryPrimitives.WriteInt64LittleEndian(storageMeta[StorageMetadataModifiedOffset..], entry.Metadata.ModifiedTime);
+                hash.AppendData(storageMeta);
+            }
 
             List<CompoundFileEntry> sorted = [.. children];
-            sorted.Sort(static (a, b) => CompoundFileFormat.CompareNames(a.Name, b.Name));
+            sorted.Sort(static (a, b) => CompareStreamNamesForHash(a.Name, b.Name));
             for (var i = 0; i < sorted.Count; i++)
             {
                 var child = sorted[i];
-                if (CompoundFileFormat.CompareNames(child.Name, DigitalSignatureStreamName) != 0
-                    && CompoundFileFormat.CompareNames(child.Name, DigitalSignatureExStreamName) != 0)
+                if (!isRoot
+                    || (!string.Equals(child.Name, DigitalSignatureStreamName, StringComparison.Ordinal)
+                        && !string.Equals(child.Name, DigitalSignatureExStreamName, StringComparison.Ordinal)))
                 {
                     HashEntryMetadata(hash, child, isRoot: false);
                 }
@@ -163,9 +192,12 @@ public sealed class MsiFileSigner : IFileFormatSigner
             return;
         }
 
-        Span<byte> sizeBytes = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(sizeBytes, (uint)entry.Data.Length);
-        hash.AppendData(sizeBytes);
+        Span<byte> streamMeta = stackalloc byte[StreamMetadataBlockLength];
+        BinaryPrimitives.WriteUInt32LittleEndian(streamMeta, (uint)entry.Data.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(streamMeta[sizeof(uint)..], entry.Metadata.StateBits);
+        BinaryPrimitives.WriteInt64LittleEndian(streamMeta[StreamMetadataCreatedOffset..], entry.Metadata.CreationTime);
+        BinaryPrimitives.WriteInt64LittleEndian(streamMeta[StreamMetadataModifiedOffset..], entry.Metadata.ModifiedTime);
+        hash.AppendData(streamMeta);
     }
 
     /// <summary>Computes the Authenticode digest over the MSI storage tree (including <c>\x05MsiDigitalSignatureEx</c>, excluding <c>\x05DigitalSignature</c>).</summary>
@@ -179,7 +211,7 @@ public sealed class MsiFileSigner : IFileFormatSigner
         return hash.GetHashAndReset();
     }
 
-    /// <summary>Recursively hashes stream contents and storage CLSIDs in <see cref="CompoundFileFormat.CompareNames"/> order.</summary>
+    /// <summary>Recursively hashes stream contents and storage CLSIDs in unsigned UTF-16LE byte order.</summary>
     /// <param name="hash">The incremental hash.</param>
     /// <param name="storage">The storage entry.</param>
     private static void HashStorageStreams(IncrementalHash hash, CompoundFileEntry storage)
@@ -187,11 +219,11 @@ public sealed class MsiFileSigner : IFileFormatSigner
         if (storage.Children is { } children)
         {
             List<CompoundFileEntry> sorted = [.. children];
-            sorted.Sort(static (a, b) => CompoundFileFormat.CompareNames(a.Name, b.Name));
+            sorted.Sort(static (a, b) => CompareStreamNamesForHash(a.Name, b.Name));
             for (var i = 0; i < sorted.Count; i++)
             {
                 var child = sorted[i];
-                if (CompoundFileFormat.CompareNames(child.Name, DigitalSignatureStreamName) == 0)
+                if (string.Equals(child.Name, DigitalSignatureStreamName, StringComparison.Ordinal))
                 {
                     continue;
                 }

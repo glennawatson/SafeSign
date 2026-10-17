@@ -16,11 +16,11 @@ public sealed class PackageFormatTests
     /// <summary>The initial capacity for synthetic ZIP test archives.</summary>
     private const int InitialZipBufferCapacity = 4096;
 
-    /// <summary>The offset of the <c>NAVX</c> magic marker in a Dynamics 365 extension header.</summary>
-    private const int NavxMagicOffset = 4;
+    /// <summary>The byte length of the <c>NXSB</c> magic marker.</summary>
+    private const int NxsbMagicLength = 4;
 
-    /// <summary>The offset of the inner ZIP length field in a Dynamics 365 <c>NAVX</c> header.</summary>
-    private const int NavxPackageSizeOffset = 12;
+    /// <summary>The byte offset of the signature block start offset relative to the end of a signed <c>.navx</c> file.</summary>
+    private const int NxsbTrailingOffsetDistance = 8;
 
     /// <summary>Verifies that <see cref="NuGetFileSigner"/> writes <c>.signature.p7s</c> and supports re-signing an already signed <c>.nupkg</c>.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
@@ -82,10 +82,10 @@ public sealed class PackageFormatTests
         }
     }
 
-    /// <summary>Verifies that <see cref="NavxFileSigner"/> preserves the 40-byte <c>NAVX</c> header, signs the inner OPC package, and updates the package size field.</summary>
+    /// <summary>Verifies that <see cref="NavxFileSigner"/> preserves the 40-byte <c>NAVX</c> header and content, and appends/replaces the <c>NXSB</c> signature block.</summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Test]
-    public async Task NavxFileSigner_PreservesNavxHeaderAndSignsEmbeddedPackage()
+    public async Task NavxFileSigner_PreservesNavxHeaderAndAppendsNxsbSignatureBlock()
     {
         var tempDir = Directory.CreateTempSubdirectory("safesign-navx-");
         try
@@ -96,21 +96,29 @@ public sealed class PackageFormatTests
 
             var innerZip = CreateSampleZipPackage("NavxManifest.xml", "<App />");
             var navxBytes = new byte[NavxFileSigner.NavxHeaderLength + innerZip.Length];
-            "NAVX"u8.CopyTo(navxBytes.AsSpan(NavxMagicOffset));
-            BinaryPrimitives.WriteUInt32LittleEndian(navxBytes.AsSpan(NavxPackageSizeOffset), (uint)innerZip.Length);
+            "NAVX"u8.CopyTo(navxBytes);
+            BinaryPrimitives.WriteInt32LittleEndian(navxBytes.AsSpan(NavxFileSigner.ContentSizeOffset), innerZip.Length);
+            "NAVX"u8.CopyTo(navxBytes.AsSpan(NavxFileSigner.SecondMagicOffset));
             innerZip.CopyTo(navxBytes.AsSpan(NavxFileSigner.NavxHeaderLength));
             await File.WriteAllBytesAsync(navxPath, navxBytes);
 
             var signer = new NavxFileSigner();
             await signer.SignAsync(new(navxPath, navxPath, session), CancellationToken.None);
+            await signer.SignAsync(new(navxPath, navxPath, session), CancellationToken.None);
 
             var signedNavx = await File.ReadAllBytesAsync(navxPath);
-            var recordedZipSize = BinaryPrimitives.ReadUInt32LittleEndian(signedNavx.AsSpan(NavxPackageSizeOffset));
-            await Assert.That(signedNavx.AsSpan(NavxMagicOffset).StartsWith("NAVX"u8)).IsTrue();
-            await Assert.That((int)recordedZipSize).IsEqualTo(signedNavx.Length - NavxFileSigner.NavxHeaderLength);
+            var expectedSigOffset = NavxFileSigner.NavxHeaderLength + innerZip.Length;
+            var recordedContentSize = BinaryPrimitives.ReadInt32LittleEndian(signedNavx.AsSpan(NavxFileSigner.ContentSizeOffset));
+            var trailingSigOffset = BinaryPrimitives.ReadInt32LittleEndian(signedNavx.AsSpan(signedNavx.Length - NxsbTrailingOffsetDistance));
 
-            var p7xBytes = ReadZipEntryBytes(signedNavx.AsMemory(NavxFileSigner.NavxHeaderLength), AppxPackageSigning.SignatureEntryName);
-            await Assert.That(p7xBytes).IsNotNull();
+            await Assert.That(signedNavx.AsSpan().StartsWith("NAVX"u8)).IsTrue();
+            await Assert.That(signedNavx.AsSpan(NavxFileSigner.SecondMagicOffset).StartsWith("NAVX"u8)).IsTrue();
+            await Assert.That(recordedContentSize).IsEqualTo(innerZip.Length);
+            await Assert.That(signedNavx.AsSpan(0, expectedSigOffset).SequenceEqual(navxBytes)).IsTrue();
+            await Assert.That(signedNavx.AsSpan(expectedSigOffset).StartsWith("NXSB"u8)).IsTrue();
+            await Assert.That(signedNavx.AsSpan(signedNavx.Length - NxsbMagicLength).StartsWith("NXSB"u8)).IsTrue();
+            await Assert.That(trailingSigOffset).IsEqualTo(expectedSigOffset);
+            await Assert.That(signedNavx[expectedSigOffset + NxsbMagicLength]).IsEqualTo((byte)0x30);
         }
         finally
         {

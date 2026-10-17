@@ -22,6 +22,17 @@ public interface IDigiCertKeyLockerApi
         [Header("x-api-key")] string apiKey,
         CancellationToken cancellationToken);
 
+    /// <summary>Fetches keypair metadata from DigiCert ONE Signing Manager.</summary>
+    /// <param name="keypairId">The keypair identifier.</param>
+    /// <param name="apiKey">The DigiCert ONE API key (<c>x-api-key</c>).</param>
+    /// <param name="cancellationToken">Cancels the HTTP request.</param>
+    /// <returns>The keypair detail response.</returns>
+    [Get("/signingmanager/api/v1/keypairs/{keypairId}")]
+    Task<IApiResponse<DigiCertKeypairDetailReply>> GetKeypairAsync(
+        string keypairId,
+        [Header("x-api-key")] string apiKey,
+        CancellationToken cancellationToken);
+
     /// <summary>Signs a digest using a DigiCert ONE keypair.</summary>
     /// <param name="keypairId">The keypair identifier.</param>
     /// <param name="apiKey">The DigiCert ONE API key (<c>x-api-key</c>).</param>

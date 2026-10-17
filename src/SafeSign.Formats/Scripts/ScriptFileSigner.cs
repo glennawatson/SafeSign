@@ -2,6 +2,7 @@
 // Glenn Watson and Contributors licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for full license information.
 
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -99,29 +100,33 @@ public sealed class ScriptFileSigner : IFileFormatSigner
                 WshSipVersion,
                 "'' SIG '' Begin signature block",
                 "'' SIG '' End signature block",
-                "'' ",
-                string.Empty)),
+                "'' SIG '' ",
+                string.Empty,
+                IsByteOrderMarkSigned: false)),
             ".JS" => (true, new ScriptFormat(
                 JScriptSipGuid,
                 WshSipVersion,
                 "// SIG // Begin signature block",
                 "// SIG // End signature block",
-                "// ",
-                string.Empty)),
+                "// SIG // ",
+                string.Empty,
+                IsByteOrderMarkSigned: false)),
             ".WSF" => (true, new ScriptFormat(
                 WsfSipGuid,
                 WshSipVersion,
-                "<!-- SIG # Begin signature block -->",
-                "<!-- SIG # End signature block -->",
-                "<!-- ",
-                " -->")),
+                "<signature>",
+                "</signature>",
+                "** SIG ** ",
+                string.Empty,
+                IsByteOrderMarkSigned: false,
+                InsertionAnchor: "</job>")),
             _ => (false, default),
         };
         return matched;
     }
 
-    /// <summary>Formats and appends the base64 Authenticode signature block to <paramref name="unsignedScript"/>.</summary>
-    /// <param name="unsignedScript">The unsigned script ending with <c>\r\n</c>.</param>
+    /// <summary>Formats and inserts the base64 Authenticode signature block into <paramref name="unsignedScript"/>.</summary>
+    /// <param name="unsignedScript">The unsigned script content.</param>
     /// <param name="format">The script format.</param>
     /// <param name="cmsSignature">The DER-encoded Authenticode PKCS #7 signature.</param>
     /// <returns>The complete signed script text.</returns>
@@ -129,10 +134,11 @@ public sealed class ScriptFileSigner : IFileFormatSigner
     public static string AppendSignatureBlock(string unsignedScript, in ScriptFormat format, ReadOnlySpan<byte> cmsSignature)
     {
         ArgumentNullException.ThrowIfNull(unsignedScript);
+        var insertionPoint = GetInsertionPoint(unsignedScript, in format);
         var base64 = Convert.ToBase64String(cmsSignature);
         var builder = new StringBuilder(unsignedScript.Length + base64.Length + SignatureFramingCapacity);
-        _ = builder.Append(unsignedScript);
-        _ = builder.Append(format.BeginMarker).Append("\r\n");
+        _ = builder.Append(unsignedScript, 0, insertionPoint);
+        _ = builder.Append("\r\n").Append(format.BeginMarker).Append("\r\n");
         for (var offset = 0; offset < base64.Length; offset += Base64LineWidth)
         {
             var count = Math.Min(Base64LineWidth, base64.Length - offset);
@@ -143,6 +149,7 @@ public sealed class ScriptFileSigner : IFileFormatSigner
         }
 
         _ = builder.Append(format.EndMarker).Append("\r\n");
+        _ = builder.Append(unsignedScript, insertionPoint, unsignedScript.Length - insertionPoint);
         return builder.ToString();
     }
 
@@ -183,8 +190,7 @@ public sealed class ScriptFileSigner : IFileFormatSigner
         var scriptText = encoding.GetString(rawBytes.AsSpan(preambleLength));
         var unsignedScript = StripExistingSignatureBlock(scriptText, in format);
 
-        var utf16Bytes = Encoding.Unicode.GetBytes(unsignedScript);
-        var digest = CryptographicOperations.HashData(session.DigestAlgorithm, utf16Bytes);
+        var digest = ComputeScriptDigest(unsignedScript, in format, hasBom: preambleLength > 0, session.DigestAlgorithm);
         var cmsSignature = await AuthenticodeSignatureBuilder.CreateAsync(
             session,
             new(CmsOids.SpcSipInfo, AuthenticodeEncoding.EncodeSipInfo(format.SipVersion, format.SipGuid), digest),
@@ -196,6 +202,53 @@ public sealed class ScriptFileSigner : IFileFormatSigner
         rawBytes.AsSpan(0, preambleLength).CopyTo(output);
         bodyBytes.CopyTo(output.AsSpan(preambleLength));
         await File.WriteAllBytesAsync(path, output, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Computes the Authenticode script digest over <paramref name="unsignedScript"/> in UTF-16LE.</summary>
+    /// <param name="unsignedScript">The unsigned script text.</param>
+    /// <param name="format">The script format.</param>
+    /// <param name="hasBom">Whether the source file starts with a byte order mark.</param>
+    /// <param name="algorithm">The digest algorithm.</param>
+    /// <returns>The script digest bytes.</returns>
+    private static byte[] ComputeScriptDigest(
+        string unsignedScript,
+        in ScriptFormat format,
+        bool hasBom,
+        HashAlgorithmName algorithm)
+    {
+        using var hash = IncrementalHash.CreateHash(algorithm);
+        if (format.IsByteOrderMarkSigned && hasBom)
+        {
+            hash.AppendData(Utf16LeBom);
+        }
+
+        hash.AppendData(Encoding.Unicode.GetBytes(unsignedScript));
+        if (!format.IsByteOrderMarkSigned)
+        {
+            Span<byte> trailer = stackalloc byte[sizeof(int)];
+            BinaryPrimitives.WriteInt32LittleEndian(trailer, GetInsertionPoint(unsignedScript, in format));
+            hash.AppendData(trailer);
+        }
+
+        return hash.GetHashAndReset();
+    }
+
+    /// <summary>Finds the character index at which the signature block is inserted into <paramref name="unsignedScript"/>.</summary>
+    /// <param name="unsignedScript">The unsigned script content.</param>
+    /// <param name="format">The script format.</param>
+    /// <returns>The character index for inserting the signature block.</returns>
+    private static int GetInsertionPoint(string unsignedScript, in ScriptFormat format)
+    {
+        if (format.InsertionAnchor is { } anchor)
+        {
+            var index = unsignedScript.LastIndexOf(anchor, StringComparison.OrdinalIgnoreCase);
+            if (index >= 0)
+            {
+                return index;
+            }
+        }
+
+        return unsignedScript.Length;
     }
 
     /// <summary>Detects the text encoding and BOM length of <paramref name="bytes"/>.</summary>
@@ -218,29 +271,45 @@ public sealed class ScriptFileSigner : IFileFormatSigner
             : (Utf8NoBom, 0);
     }
 
-    /// <summary>Strips any existing Authenticode comment signature block and ensures a trailing <c>\r\n</c>.</summary>
+    /// <summary>Strips any existing Authenticode comment signature block while preserving the original unsigned script bytes.</summary>
     /// <param name="scriptText">The decoded script text.</param>
     /// <param name="format">The script format.</param>
-    /// <returns>The unsigned script text ending with <c>\r\n</c>.</returns>
+    /// <returns>The unsigned script text.</returns>
     private static string StripExistingSignatureBlock(string scriptText, in ScriptFormat format)
     {
         var beginIndex = scriptText.LastIndexOf(format.BeginMarker, StringComparison.Ordinal);
-        if (beginIndex >= 0)
-        {
-            var endIndex = scriptText.IndexOf(format.EndMarker, beginIndex, StringComparison.Ordinal);
-            if (endIndex > beginIndex)
-            {
-                scriptText = scriptText[..beginIndex];
-            }
-        }
-
-        if (scriptText.EndsWith("\r\n", StringComparison.Ordinal))
+        if (beginIndex < 0)
         {
             return scriptText;
         }
 
-        return scriptText.EndsWith('\n')
-            ? $"{scriptText.AsSpan(0, scriptText.Length - 1)}\r\n"
-            : $"{scriptText}\r\n";
+        var endMarkerIndex = scriptText.IndexOf(format.EndMarker, beginIndex, StringComparison.Ordinal);
+        if (endMarkerIndex <= beginIndex)
+        {
+            return scriptText;
+        }
+
+        const int windowsNewlineLength = 2;
+        var prefix = scriptText.AsSpan(0, beginIndex);
+        if (prefix.EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            prefix = prefix[..^windowsNewlineLength];
+        }
+        else if (prefix.EndsWith('\n'))
+        {
+            prefix = prefix[..^1];
+        }
+
+        var suffix = scriptText.AsSpan(endMarkerIndex + format.EndMarker.Length);
+        if (suffix.StartsWith("\r\n", StringComparison.Ordinal))
+        {
+            suffix = suffix[windowsNewlineLength..];
+        }
+        else if (suffix.StartsWith('\n'))
+        {
+            suffix = suffix[1..];
+        }
+
+        return string.Concat(prefix, suffix);
     }
 }

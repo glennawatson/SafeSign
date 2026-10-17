@@ -13,6 +13,8 @@ namespace SafeSign.Formats.Scripts;
 /// <param name="EndMarker">The comment line that ends the Authenticode signature block.</param>
 /// <param name="LinePrefix">The prefix prepended to each 64-character base64 signature line.</param>
 /// <param name="LineSuffix">The suffix appended to each 64-character base64 signature line.</param>
+/// <param name="IsByteOrderMarkSigned">Whether a present byte order mark (<c>\uFEFF</c>) is included in the UTF-16LE digest and lacks the 4-byte WSH insertion-point trailer.</param>
+/// <param name="InsertionAnchor">An optional closing tag before which the signature block is inserted (for example, <c>&lt;/job&gt;</c> in <c>.wsf</c> files).</param>
 [DebuggerDisplay("{BeginMarker,nq}")]
 public readonly record struct ScriptFormat(
     Guid SipGuid,
@@ -20,4 +22,6 @@ public readonly record struct ScriptFormat(
     string BeginMarker,
     string EndMarker,
     string LinePrefix,
-    string LineSuffix);
+    string LineSuffix,
+    bool IsByteOrderMarkSigned = true,
+    string? InsertionAnchor = null);

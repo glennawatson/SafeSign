@@ -61,8 +61,8 @@ public sealed class X509StoreProvider(X509StoreOptions options) : ISigningProvid
         return LocalKeySigner.Sign(cert.Certificate, in request);
     }
 
-    /// <summary>Locates the matching certificate in the configured <see cref="X509Store"/>.</summary>
-    /// <returns>The signing certificate.</returns>
+    /// <summary>Locates the matching certificate in the configured <see cref="X509Store"/> and resolves any intermediate certificates in the store.</summary>
+    /// <returns>The signing certificate and intermediate chain.</returns>
     /// <exception cref="ProviderConfigurationException">No matching certificate with a private key was found.</exception>
     private SigningCertificate FindCertificate()
     {
@@ -72,7 +72,7 @@ public sealed class X509StoreProvider(X509StoreOptions options) : ISigningProvid
         {
             if (Matches(candidate) && candidate.HasPrivateKey)
             {
-                return new(candidate, []);
+                return new(candidate, CertificateChainOrder.IssuersOf([.. store.Certificates], candidate));
             }
         }
 

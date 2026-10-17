@@ -94,18 +94,25 @@ public static class CertumRequests
         var refreshToken = cachedRefreshToken is { Length: > 0 } ? cachedRefreshToken : options.RefreshToken;
         if (refreshToken is { Length: > 0 })
         {
-            using var refreshResponse = await ProviderRetry.ExecuteAsync(
-                ct => api.RefreshTokenAsync(
-                    options.ClientId,
-                    options.ClientSecret,
-                    refreshToken,
-                    "refresh_token",
-                    ct),
-                options.RetryOptions,
-                time,
-                cancellationToken).ConfigureAwait(false);
-            var refreshReply = ProviderHttp.Unwrap(refreshResponse, "POST /idp/oauth2.0/accessToken (refresh_token)");
-            return ToCachedToken(refreshReply, refreshToken, time);
+            try
+            {
+                using var refreshResponse = await ProviderRetry.ExecuteAsync(
+                    ct => api.RefreshTokenAsync(
+                        options.ClientId,
+                        options.ClientSecret,
+                        refreshToken,
+                        "refresh_token",
+                        ct),
+                    options.RetryOptions,
+                    time,
+                    cancellationToken).ConfigureAwait(false);
+                var refreshReply = ProviderHttp.Unwrap(refreshResponse, "POST /idp/oauth2.0/accessToken (refresh_token)");
+                return ToCachedToken(refreshReply, refreshToken, time);
+            }
+            catch (ProviderRequestException) when (HasCasCredentials(options))
+            {
+                // Refresh token expired or was rejected; fall back to CAS login.
+            }
         }
 
         if (options.Email is not { Length: > 0 } email)
@@ -335,6 +342,14 @@ public static class CertumRequests
             ? CertumTotp.Parse(otpCode).GenerateCode(time.GetUtcNow())
             : otpCode;
     }
+
+    /// <summary>Checks whether <paramref name="options"/> includes CAS email and TOTP/OTP credentials.</summary>
+    /// <param name="options">The Certum options.</param>
+    /// <returns>True when CAS fallback login is possible.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool HasCasCredentials(CertumOptions options) =>
+        options.Email is { Length: > 0 }
+        && (options.TotpSecret is { Length: > 0 } || options.OtpCode is { Length: > 0 });
 
     /// <summary>Creates a source-generated <see cref="ICertumCloudSignApi"/> client.</summary>
     /// <param name="endpoint">The SimplySign endpoint.</param>

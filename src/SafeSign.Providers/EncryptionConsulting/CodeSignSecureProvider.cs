@@ -4,6 +4,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Refit;
 using SafeSign.Providers.Shared;
 using SafeSign.Signing;
@@ -103,7 +104,7 @@ public sealed class CodeSignSecureProvider : ISigningProvider
             _time,
             cancellationToken).ConfigureAwait(false);
         var raw = await ProviderHttp.ReadBytesAsync(response, $"POST {_options.Endpoint}api/signing/sign/", cancellationToken).ConfigureAwait(false);
-        var hex = Encoding.ASCII.GetString(raw).AsSpan().Trim().Trim('"');
+        var hex = ExtractSignatureHex(raw);
         if (hex.IsEmpty)
         {
             throw new ProviderRequestException("CodeSign Secure returned an empty signature response.");
@@ -117,6 +118,29 @@ public sealed class CodeSignSecureProvider : ISigningProvider
         {
             throw new ProviderRequestException($"CodeSign Secure returned a non-hexadecimal signature payload: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>Extracts the hexadecimal signature string from either a JSON object (<c>{"result":"..."}</c>) or a quoted hex literal.</summary>
+    /// <param name="raw">The raw HTTP response bytes.</param>
+    /// <returns>The trimmed hexadecimal signature span.</returns>
+    /// <exception cref="ProviderRequestException">The JSON payload could not be parsed.</exception>
+    private static ReadOnlySpan<char> ExtractSignatureHex(ReadOnlySpan<byte> raw)
+    {
+        var trimmedBytes = raw.TrimStart(" \t\r\n"u8);
+        if (trimmedBytes.StartsWith("{"u8))
+        {
+            try
+            {
+                var reply = JsonSerializer.Deserialize(trimmedBytes, CodeSignSecureJsonContext.Default.CodeSignSecureSignReply);
+                return reply?.Result is { Length: > 0 } result ? result.AsSpan().Trim() : ReadOnlySpan<char>.Empty;
+            }
+            catch (JsonException ex)
+            {
+                throw new ProviderRequestException($"CodeSign Secure returned malformed JSON: {ex.Message}", ex);
+            }
+        }
+
+        return Encoding.ASCII.GetString(raw).AsSpan().Trim().Trim('"');
     }
 
     /// <summary>Returns the configured or freshly exchanged JWT bearer token.</summary>

@@ -99,12 +99,12 @@ public sealed class DigiCertKeyLockerProvider : ISigningProvider
             _time,
             cancellationToken).ConfigureAwait(false);
         var reply = ProviderHttp.Unwrap(response, $"GET {_options.Endpoint}signingmanager/api/v1/certificates");
-        if (reply.Items is not { Length: > 0 } items || items[0].Cert is not { Length: > 0 } certBase64)
+        var item = SelectActiveCertificate(reply.Items);
+        if (item?.Cert is not { Length: > 0 } certBase64)
         {
             throw new ProviderRequestException("DigiCert KeyLocker returned no matching active certificate.");
         }
 
-        var item = items[0];
         _keypairId ??= item.Keypair?.Id ?? throw new ProviderRequestException("DigiCert KeyLocker certificate entry had no keypair id.");
         _account = item.Account is { Id.Length: > 0 } acct ? new DigiCertAccountRef(acct.Id, null) : null;
         return _certificate = BuildSigningCertificate(certBase64, item.Chain);
@@ -117,6 +117,16 @@ public sealed class DigiCertKeyLockerProvider : ISigningProvider
         var certificate = await GetCertificateAsync(cancellationToken).ConfigureAwait(false);
         var kind = PublicKeyKinds.Of(certificate.Certificate);
         var api = CreateClient();
+        if (_account is null)
+        {
+            using var keypairResponse = await ProviderRetry.ExecuteAsync(
+                ct => api.GetKeypairAsync(_keypairId!, _options.ApiKey, ct),
+                _time,
+                cancellationToken).ConfigureAwait(false);
+            var keypairReply = ProviderHttp.Unwrap(keypairResponse, $"GET {_options.Endpoint}signingmanager/api/v1/keypairs/{_keypairId}");
+            _account = keypairReply.Account is { Id.Length: > 0 } acct ? new DigiCertAccountRef(acct.Id, null) : null;
+        }
+
         DigiCertSignPayload payload = new(_account, Algorithm(kind, request.HashAlgorithm), Convert.ToBase64String(request.Digest.Span));
         using var response = await ProviderRetry.ExecuteAsync(
             ct => api.SignAsync(_keypairId!, _options.ApiKey, payload, ct),
@@ -126,6 +136,36 @@ public sealed class DigiCertKeyLockerProvider : ISigningProvider
         return reply.Signature is { Length: > 0 } sigBase64
             ? Convert.FromBase64String(sigBase64)
             : throw new ProviderRequestException("DigiCert KeyLocker returned no signature.");
+    }
+
+    /// <summary>Selects the first <c>ACTIVE</c> certificate item with non-empty certificate data, or falls back to the first item with certificate data.</summary>
+    /// <param name="items">The items returned by DigiCert ONE.</param>
+    /// <returns>The selected item, or <see langword="null"/> when none has certificate data.</returns>
+    private static DigiCertCertificateItem? SelectActiveCertificate(DigiCertCertificateItem[]? items)
+    {
+        if (items is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        DigiCertCertificateItem? fallback = null;
+        for (var i = 0; i < items.Length; i++)
+        {
+            var candidate = items[i];
+            if (candidate.Cert is not { Length: > 0 })
+            {
+                continue;
+            }
+
+            if (string.Equals(candidate.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+
+            fallback ??= candidate;
+        }
+
+        return fallback;
     }
 
     /// <summary>Builds a <see cref="SigningCertificate"/> from the Base64 leaf and chain items.</summary>

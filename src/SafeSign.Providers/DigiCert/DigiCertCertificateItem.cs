@@ -13,6 +13,7 @@ namespace SafeSign.Providers.DigiCert;
 /// <param name="Account">The account owning the certificate.</param>
 /// <param name="Keypair">The associated keypair metadata.</param>
 /// <param name="Chain">The optional issuer certificate chain.</param>
+/// <param name="Status">The optional certificate status (for example <c>ACTIVE</c>).</param>
 [DebuggerDisplay("{Alias ?? Id,nq}")]
 public sealed record DigiCertCertificateItem(
     string? Id,
@@ -20,4 +21,5 @@ public sealed record DigiCertCertificateItem(
     string? Cert,
     DigiCertAccountRef? Account,
     DigiCertKeypairRef? Keypair,
-    DigiCertChainItem[]? Chain);
+    DigiCertChainItem[]? Chain,
+    string? Status = null);

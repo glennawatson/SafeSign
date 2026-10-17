@@ -19,7 +19,10 @@ public static class CmsAttributes
     private const int AttributeFramingOverhead = 8;
 
     /// <summary>The initial capacity in bytes for an RFC 5035 <c>SigningCertificateV2</c> sequence.</summary>
-    private const int SigningCertV2Capacity = 48;
+    private const int SigningCertV2Capacity = 256;
+
+    /// <summary>The context-specific tag <c>[4]</c> for the <c>directoryName</c> choice of <c>GeneralName</c> (RFC 5280 section 4.2.1.6).</summary>
+    private static readonly Asn1Tag DirectoryNameTag = new(TagClass.ContextSpecific, 4, isConstructed: true);
 
     /// <summary>Wraps one already-encoded value as an attribute.</summary>
     /// <param name="oid">The attribute type.</param>
@@ -79,18 +82,19 @@ public static class CmsAttributes
         return new(CmsOids.SigningTime, writer.Encode());
     }
 
-    /// <summary>Builds the RFC 5035 <c>SigningCertificateV2</c> attribute with a SHA-256 certificate hash.</summary>
+    /// <summary>Builds the RFC 5035 <c>SigningCertificateV2</c> attribute with a SHA-256 certificate hash and <c>IssuerSerial</c>.</summary>
     /// <param name="certificate">The signing certificate.</param>
     /// <returns>The attribute.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static CmsAttribute SigningCertificateV2(X509Certificate2 certificate) =>
         Single(CmsOids.SigningCertificateV2, EncodeSigningCertificateV2Value(certificate));
 
-    /// <summary>Encodes the DER value of an RFC 5035 <c>SigningCertificateV2</c> sequence using the default SHA-256 hash algorithm.</summary>
+    /// <summary>Encodes the DER value of an RFC 5035 <c>SigningCertificateV2</c> sequence using the default SHA-256 hash algorithm and <c>IssuerSerial</c>.</summary>
     /// <param name="certificate">The signing certificate.</param>
     /// <returns>The DER-encoded <c>SigningCertificateV2</c> value.</returns>
     public static byte[] EncodeSigningCertificateV2Value(X509Certificate2 certificate)
     {
+        ArgumentNullException.ThrowIfNull(certificate);
         Span<byte> certHash = stackalloc byte[SHA256.HashSizeInBytes];
         _ = SHA256.HashData(certificate.RawDataMemory.Span, certHash);
 
@@ -103,6 +107,20 @@ public static class CmsAttributes
                 {
                     // RFC 5035 section 4: HashAlgorithm defaults to id-sha256 and MUST be omitted when default in DER.
                     writer.WriteOctetString(certHash);
+
+                    // NuGet Author and Repository signatures require IssuerSerial with a directoryName [4] GeneralName.
+                    using (writer.PushSequence())
+                    {
+                        using (writer.PushSequence())
+                        {
+                            using (writer.PushSequence(DirectoryNameTag))
+                            {
+                                writer.WriteEncodedValue(certificate.IssuerName.RawData);
+                            }
+                        }
+
+                        writer.WriteInteger(certificate.SerialNumberBytes.Span);
+                    }
                 }
             }
         }
