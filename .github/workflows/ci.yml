@@ -1,31 +1,29 @@
 name: Build
+
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
+
 permissions:
   contents: read
-concurrency:
-  group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  actions: write
+
 jobs:
   build:
-    name: Build and test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+    name: Build and test
     uses: glennawatson/actions-common/.github/workflows/workflow-common-setup-and-build.yml@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
     with:
-      runner: ${{ matrix.os }}
       solutionFile: SafeSign.slnx
       minverTagPrefix: 'v'
       minverMinimumMajorMinor: '1.0'
       minverAutoIncrement: 'minor'
+      uploadCodecov: false
       dotnetVersions: |
         10.0.x
         11.0.x
+
   publish-aot:
     name: Publish Native AOT (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
@@ -39,41 +37,25 @@ jobs:
             rid: linux-x64
           - os: macos-latest
             rid: osx-arm64
+    env:
+      DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+
       - name: Setup .NET Environment
         uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
         with:
+          stamp-version: 'false'
           dotnet-versions: |
             10.0.x
             11.0.x
-          minver-tag-prefix: 'v'
-          minver-auto-increment: 'minor'
-          stamp-version: 'false'
+
       - name: Publish Native AOT (net11.0)
-        uses: glennawatson/actions-common/.github/actions/run-command@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
-        with:
-          command: dotnet
-          arguments: |-
-            publish
-            src/SafeSign/SafeSign.csproj
-            --configuration
-            Release
-            --framework
-            net11.0
-            --runtime
-            ${{ matrix.rid }}
-            -p:PublishAot=true
-            --output
-            ${GITHUB_WORKSPACE}/aot/${{ matrix.rid }}
-          working-directory: .
-      - name: Exercise Native AOT executable
-        uses: glennawatson/actions-common/.github/actions/run-command@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
-        with:
-          command: ${{ runner.os == 'Windows' && format('{0}/aot/{1}/SafeSign.exe', github.workspace, matrix.rid) || format('{0}/aot/{1}/SafeSign', github.workspace, matrix.rid) }}
-          arguments: |-
-            providers
-          working-directory: .
+        run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "${{ matrix.rid }}" -p:PublishAot=true -o "aot/${{ matrix.rid }}"
+
+      - name: Verify Native AOT binary
+        shell: bash
+        run: ./aot/${{ matrix.rid }}/SafeSign providers
