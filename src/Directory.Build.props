@@ -1,0 +1,125 @@
+<Project>
+
+  <PropertyGroup>
+    <CopyrightStartYear>2026</CopyrightStartYear>
+    <CopyrightCurrentYear>$([System.DateTime]::UtcNow.ToString("yyyy"))</CopyrightCurrentYear>
+    <CopyrightYearRange Condition="'$(CopyrightCurrentYear)' == '$(CopyrightStartYear)'">$(CopyrightStartYear)</CopyrightYearRange>
+    <CopyrightYearRange Condition="'$(CopyrightCurrentYear)' != '$(CopyrightStartYear)'">$(CopyrightStartYear)-$(CopyrightCurrentYear)</CopyrightYearRange>
+    <Copyright>Copyright (c) $(CopyrightYearRange) Glenn Watson and Contributors</Copyright>
+    <Authors>Glenn Watson and Contributors</Authors>
+    <Owners>glennawatson</Owners>
+    <Company>Glenn Watson</Company>
+
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/glennawatson/SafeSign</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReleaseNotes>https://github.com/glennawatson/SafeSign/releases</PackageReleaseNotes>
+    <!-- PackageTags are per-package: each packable project sets its own. -->
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <RepositoryUrl>https://github.com/glennawatson/SafeSign</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <Nullable>enable</Nullable>
+    <!-- Pinned, not 'latest': the language surface must not float with the installed SDK. -->
+    <LangVersion>15.0</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DebugType>embedded</DebugType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
+
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <MinVerAutoIncrement>patch</MinVerAutoIncrement>
+    <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
+    <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
+
+    <!-- Only the tool project opts back in. -->
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+
+    <IsTestProject>$(MSBuildProjectName.Contains('Tests'))</IsTestProject>
+  </PropertyGroup>
+
+  <!-- Shipped code is published with Native AOT, so the trim and AOT analyzers run on every non-test build. -->
+  <PropertyGroup Condition="'$(IsTestProject)' != 'true' And !$(MSBuildProjectName.Contains('Benchmarks'))">
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <TUnitImplicitUsings>true</TUnitImplicitUsings>
+    <TUnitAssertionsImplicitUsings>true</TUnitAssertionsImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="NSubstitute" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <!-- Copied as AssemblyName.testconfig.json, where the coverage step looks for it. -->
+    <None Include="$(MSBuildThisFileDirectory)testconfig.json" Condition="Exists('$(MSBuildThisFileDirectory)testconfig.json')">
+      <Link>$(AssemblyName).testconfig.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\README.md" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)..\README.md')" />
+    <None Include="$(MSBuildThisFileDirectory)..\icons\icon.png" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)..\icons\icon.png')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+    <PackageReference Include="PublicApiSharp.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- A project referencing the package it produces is a restore cycle, so it skips its own. -->
+  <PropertyGroup>
+    <SelfAnalyze Condition="'$(SelfAnalyze)' == ''">true</SelfAnalyze>
+    <OwnPackageId Condition="$(MSBuildProjectName.EndsWith('.Analyzers')) Or $(MSBuildProjectName.EndsWith('.Analyzers.Packages'))">$(MSBuildProjectName.Replace('.Packages', ''))</OwnPackageId>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(SelfAnalyze)' == 'true'">
+    <PackageReference Include="StyleSharp.Analyzers" PrivateAssets="all" Condition="'$(OwnPackageId)' != 'StyleSharp.Analyzers'" />
+    <PackageReference Include="PerformanceSharp.Analyzers" PrivateAssets="all" Condition="'$(OwnPackageId)' != 'PerformanceSharp.Analyzers'" />
+    <PackageReference Include="SecuritySharp.Analyzers" PrivateAssets="all" Condition="'$(OwnPackageId)' != 'SecuritySharp.Analyzers'" />
+  </ItemGroup>
+
+  <!-- Drop SDK generators whose trigger attribute this codebase never uses; re-enable one the
+       moment its attribute appears, or csc silently emits nothing for it. -->
+  <Target Name="RemoveUnusedSdkGenerators" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)"
+                Condition="'%(Filename)' == 'Microsoft.Interop.ComInterfaceGenerator'
+                        or '%(Filename)' == 'Microsoft.Interop.ComClassGenerator'
+                        or '%(Filename)' == 'Microsoft.Interop.VtableIndexStubGenerator'
+                        or '%(Filename)' == 'Microsoft.Interop.JavaScript.JSImportGenerator'
+                        or '%(Filename)' == 'Microsoft.Interop.LibraryImportGenerator'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The analyzer-authoring rules only apply to projects that ship analyzers. Excluding the
+       package assets does not work here: transitive pinning re-promotes them, so drop them from
+       the compiler invocation instead. -->
+  <Target Name="RemoveAnalyzerAuthoringRules"
+          BeforeTargets="CoreCompile"
+          Condition="'$(EnforceExtendedAnalyzerRules)' != 'true'">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)"
+                Condition="'%(Filename)' == 'Microsoft.CodeAnalysis.Analyzers'
+                        or '%(Filename)' == 'Microsoft.CodeAnalysis.CSharp.Analyzers'" />
+    </ItemGroup>
+  </Target>
+</Project>

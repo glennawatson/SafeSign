@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <RootNamespace>SafeSign</RootNamespace>
+    <AssemblyName>SafeSign</AssemblyName>
+    <Description>Cross-platform code signing command line for Windows executables, installers, packages and scripts, with cloud and HSM key providers including Certum SimplySign.</Description>
+    <PackageTags>code-signing;authenticode;signing;certum;simplysign;kms;key-vault;msix;nupkg</PackageTags>
+
+    <IsPackable>true</IsPackable>
+    <IsPublishable>true</IsPublishable>
+    <PackAsTool Condition="'$(PublishAot)' != 'true'">true</PackAsTool>
+    <PublishDocumentationFile Condition="'$(PublishAot)' == 'true'">false</PublishDocumentationFile>
+    <ToolCommandName>safesign</ToolCommandName>
+
+    <!-- Signing output must not depend on the machine's culture. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SafeSign.Signing\SafeSign.Signing.csproj" />
+    <ProjectReference Include="..\SafeSign.Providers\SafeSign.Providers.csproj" />
+    <ProjectReference Include="..\SafeSign.Formats\SafeSign.Formats.csproj" />
+  </ItemGroup>
+
+</Project>

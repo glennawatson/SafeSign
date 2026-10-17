@@ -1,0 +1,56 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Shared Version Variables">
+    <SharpAnalyzersVersion>5.1.4</SharpAnalyzersVersion>
+  </PropertyGroup>
+
+  <ItemGroup Label="Analyzers">
+    <PackageVersion Include="PerformanceSharp.Analyzers" Version="$(SharpAnalyzersVersion)" />
+    <PackageVersion Include="PublicApiSharp.Analyzers" Version="2.1.0" />
+    <PackageVersion Include="SecuritySharp.Analyzers" Version="$(SharpAnalyzersVersion)" />
+    <PackageVersion Include="StyleSharp.Analyzers" Version="$(SharpAnalyzersVersion)" />
+  </ItemGroup>
+
+  <ItemGroup Label="Http">
+    <PackageVersion Include="Refit" Version="16.3.0" />
+    <PackageVersion Include="Refit.HttpClientFactory" Version="16.3.0" />
+    <PackageVersion Include="Refit.Testing" Version="16.3.0" />
+  </ItemGroup>
+
+  <!-- Each target framework takes the packages of its own release: the .NET 11 packages refer to
+       runtime types that only the .NET 11 runtime has. -->
+  <Choose>
+    <When Condition="'$(TargetFramework)' == 'net10.0'">
+      <ItemGroup Label="Framework-matched">
+        <PackageVersion Include="System.CommandLine" Version="2.0.13" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+      </ItemGroup>
+    </When>
+    <Otherwise>
+      <ItemGroup Label="Framework-matched">
+        <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.2.26504.105" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.2.26504.105" />
+      </ItemGroup>
+    </Otherwise>
+  </Choose>
+
+  <ItemGroup Label="Benchmarks">
+    <PackageVersion Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
+  </ItemGroup>
+
+  <ItemGroup Label="Versioning">
+    <PackageVersion Include="MinVer" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
+    <PackageVersion Include="NSubstitute" Version="6.2.0" />
+    <PackageVersion Include="TUnit" Version="1.75.0" />
+  </ItemGroup>
+
+</Project>

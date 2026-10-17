@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <RootNamespace>SafeSign.Signing</RootNamespace>
+    <Description>Authenticode and CMS signature engine for SafeSign: remote-key signing, RFC 3161 timestamps and Windows PE signing, with no platform-specific dependencies.</Description>
+    <PackageTags>code-signing;authenticode;cms;pkcs7;rfc3161;pe</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Refit" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SafeSign.Signing.Tests" />
+    <InternalsVisibleTo Include="SafeSign.Benchmarks" />
+  </ItemGroup>
+
+</Project>

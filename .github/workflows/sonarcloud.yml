@@ -1,0 +1,61 @@
+name: SonarCloud
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: sonarcloud-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  sonarcloud:
+    name: Build, test, and analyze
+    if: >-
+      github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE: 1
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+    - name: Setup .NET Environment
+      id: environment
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@main
+      with:
+        dotnet-versions: |
+          10.0.x
+          11.0.x
+        minver-tag-prefix: 'v'
+        minver-auto-increment: 'minor'
+    - name: SonarCloud begin
+      uses: glennawatson/actions-common/.github/actions/sonarcloud@main
+      with:
+        mode: begin
+        project-key: glennawatson_SafeSign
+        organization: glennawatson
+        version: ${{ steps.environment.outputs.version-semver2 }}
+        exclusions: '**/tests/**'
+        coverage-exclusions: '**/tests/**'
+        cpd-exclusions: '**/tests/**'
+        test-exclusions: '**/tests/**'
+        working-directory: src
+    - name: Build
+      uses: glennawatson/actions-common/.github/actions/dotnet-build@main
+      with:
+        solution-file: SafeSign.slnx
+    - name: Test
+      uses: glennawatson/actions-common/.github/actions/dotnet-test@main
+      with:
+        solution-file: SafeSign.slnx
+    - name: SonarCloud end
+      if: always()
+      uses: glennawatson/actions-common/.github/actions/sonarcloud@main
+      with:
+        mode: end
+        project-key: glennawatson_SafeSign
+        working-directory: src

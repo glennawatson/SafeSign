@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <RootNamespace>SafeSign.Signing.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Refit" />
+    <PackageReference Include="Refit.Testing" />
+    <ProjectReference Include="..\..\SafeSign.Signing\SafeSign.Signing.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <RootNamespace>SafeSign.Formats</RootNamespace>
+    <Description>File format signers for SafeSign: MSI, CAB, catalogs, APPX/MSIX, NuGet packages and Windows scripts.</Description>
+    <PackageTags>code-signing;authenticode;msi;cab;msix;appx;nupkg;powershell</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SafeSign.Signing\SafeSign.Signing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SafeSign.Formats.Tests" />
+    <InternalsVisibleTo Include="SafeSign.Benchmarks" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,38 @@
+[
+  {
+    "benchmark": "PeChecksum_64KiB",
+    "site": "SafeSign.Signing.Pe.PeChecksum.Accumulate",
+    "maxBytesPerOperation": 0,
+    "reason": "Zero-allocation SIMD Vector256<ushort> / Vector128<ushort> folding checksum over ReadOnlySpan<byte>; no managed heap allocations are permitted."
+  },
+  {
+    "benchmark": "PeLayoutReader_Read",
+    "site": "SafeSign.Signing.Pe.PeLayoutReader.Read",
+    "maxBytesPerOperation": 0,
+    "reason": "Zero-allocation span parsing returning a value-type PeLayout record struct; no managed heap allocations are permitted."
+  },
+  {
+    "benchmark": "PeAuthenticodeDigest_64KiB",
+    "site": "SafeSign.Signing.Pe.PeAuthenticodeDigest.ComputeAsync",
+    "maxBytesPerOperation": 2048,
+    "reason": "The 64 KiB read buffer is rented from ArrayPool<byte>.Shared (0 B heap allocation). The ~1,552 B/op allocation consists of the SafeFileHandle wrapper, the async state machine / RandomAccess OS I/O continuation for the 3 PE segments, the IncrementalHash native EVP_MD_CTX handle wrapper, and the detached 32-byte SHA-256 digest byte[] returned in PeDigest."
+  },
+  {
+    "benchmark": "AuthenticodeSignature_Build",
+    "site": "SafeSign.Signing.Authenticode.AuthenticodeSignatureBuilder.CreateAsync",
+    "maxBytesPerOperation": 10240,
+    "reason": "Pre-sized AsnWriter buffers for SpcIndirectDataContent, SpcSpOpusInfo, SpcStatementType, SignedAttributes SET OF, and outer ContentInfo/SignedData, plus X509Certificate2.GetRSAPublicKey() verification key import, the 256-byte RSA signature byte[] returned by ISigningProvider.SignDigestAsync, and the final DER-encoded CMS ContentInfo byte[] (~1.6 KiB) returned to the caller."
+  },
+  {
+    "benchmark": "SignPeExecutable_64KiB",
+    "site": "SafeSign.Signing.Pe.PeFileSigner.SignAsync",
+    "maxBytesPerOperation": 16384,
+    "reason": "End-to-end PE32+ signing (~14.8 KiB/op): OS-level File.Copy in SignedFileOutput.WriteAsync (0 B managed buffer), streaming PeAuthenticodeDigest (ArrayPool<byte>.Shared 64 KiB read buffer), AuthenticodeSignatureBuilder ASN.1 DER CMS construction, and WIN_CERTIFICATE alignment/checksum write."
+  },
+  {
+    "benchmark": "SignPowerShellScript",
+    "site": "SafeSign.Formats.Scripts.ScriptFileSigner.SignAsync",
+    "maxBytesPerOperation": 32768,
+    "reason": "End-to-end PowerShell script signing (~29.9 KiB/op): OS-level File.Copy in SignedFileOutput.WriteAsync, async file read/write buffers, UTF-16LE digest calculation over the unsigned script body, AuthenticodeSignatureBuilder SPC_SIPINFO CMS construction, and base64 # SIG # comment block StringBuilder formatting."
+  }
+]

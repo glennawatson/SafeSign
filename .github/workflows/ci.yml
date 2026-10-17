@@ -1,0 +1,79 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    uses: glennawatson/actions-common/.github/workflows/workflow-common-setup-and-build.yml@main
+    with:
+      runner: ${{ matrix.os }}
+      solutionFile: SafeSign.slnx
+      minverTagPrefix: 'v'
+      minverMinimumMajorMinor: '1.0'
+      minverAutoIncrement: 'minor'
+      dotnetVersions: |
+        10.0.x
+        11.0.x
+  publish-aot:
+    name: Publish Native AOT (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET Environment
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@main
+        with:
+          dotnet-versions: |
+            10.0.x
+            11.0.x
+          minver-tag-prefix: 'v'
+          minver-auto-increment: 'minor'
+          stamp-version: 'false'
+      - name: Publish Native AOT (net11.0)
+        uses: glennawatson/actions-common/.github/actions/run-command@main
+        with:
+          command: dotnet
+          arguments: |-
+            publish
+            src/SafeSign/SafeSign.csproj
+            --configuration
+            Release
+            --framework
+            net11.0
+            --runtime
+            ${{ matrix.rid }}
+            -p:PublishAot=true
+            --output
+            ${GITHUB_WORKSPACE}/aot/${{ matrix.rid }}
+          working-directory: .
+      - name: Exercise Native AOT executable
+        uses: glennawatson/actions-common/.github/actions/run-command@main
+        with:
+          command: ${{ runner.os == 'Windows' && format('{0}/aot/{1}/SafeSign.exe', github.workspace, matrix.rid) || format('{0}/aot/{1}/SafeSign', github.workspace, matrix.rid) }}
+          arguments: |-
+            providers
+          working-directory: .

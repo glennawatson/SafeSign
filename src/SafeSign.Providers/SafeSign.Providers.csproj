@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <RootNamespace>SafeSign.Providers</RootNamespace>
+    <Description>Signing key providers for SafeSign: Certum SimplySign, cloud KMS and HSM services, and local certificates.</Description>
+    <PackageTags>code-signing;certum;simplysign;kms;key-vault;hsm</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Refit" />
+    <ProjectReference Include="..\SafeSign.Signing\SafeSign.Signing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SafeSign.Providers.Tests" />
+    <InternalsVisibleTo Include="SafeSign.Benchmarks" />
+  </ItemGroup>
+
+</Project>

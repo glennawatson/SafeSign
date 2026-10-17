@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="testconfig.json" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="SafeSign.Signing/SafeSign.Signing.csproj" />
+    <Project Path="SafeSign.Providers/SafeSign.Providers.csproj" />
+    <Project Path="SafeSign.Formats/SafeSign.Formats.csproj" />
+    <Project Path="SafeSign/SafeSign.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SafeSign.Signing.Tests/SafeSign.Signing.Tests.csproj" />
+    <Project Path="tests/SafeSign.Providers.Tests/SafeSign.Providers.Tests.csproj" />
+    <Project Path="tests/SafeSign.Formats.Tests/SafeSign.Formats.Tests.csproj" />
+    <Project Path="tests/SafeSign.Tests/SafeSign.Tests.csproj" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/SafeSign.Benchmarks/SafeSign.Benchmarks.csproj" />
+  </Folder>
+</Solution>
