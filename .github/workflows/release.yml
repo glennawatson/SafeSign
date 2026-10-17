@@ -107,7 +107,7 @@ jobs:
         run: dotnet pack SafeSign.slnx --no-build --configuration Release -o "${GITHUB_WORKSPACE}/packages"
 
       - name: Upload unsigned packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nuget-unsigned
           path: packages/*.nupkg
@@ -143,7 +143,7 @@ jobs:
         run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "${{ matrix.rid }}" -p:PublishAot=true "-p:Version=${{ needs.build.outputs.semver2 }}" "-p:MinVerVersionOverride=${{ needs.build.outputs.semver2 }}" -o "artifacts/${{ matrix.rid }}"
 
       - name: Upload the published app
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: app-${{ matrix.rid }}
           path: artifacts/${{ matrix.rid }}
@@ -186,14 +186,14 @@ jobs:
 
       - name: Upload the Linux binary for dogfooding
         if: matrix.rid == 'linux-x64'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: app-linux-x64
           path: artifacts/linux-x64
           if-no-files-found: error
 
       - name: Upload the Linux archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: packages-${{ matrix.rid }}
           path: artifacts/safesign-*.tar.gz
@@ -231,7 +231,7 @@ jobs:
         run: tar -czf "artifacts/safesign-$VERSION-$RID.tar.gz" -C artifacts "$RID"
 
       - name: Upload the macOS archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: packages-${{ matrix.rid }}
           path: artifacts/safesign-*.tar.gz
@@ -252,32 +252,32 @@ jobs:
       CERTUM_CERT_FINGERPRINT: ${{ secrets.CERTUM_CERT_FINGERPRINT }}
     steps:
       - name: Download the Linux Native AOT binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: app-linux-x64
           path: artifacts/linux-x64
 
       - name: Download the x64 Windows app
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: app-win-x64
           path: artifacts/win-x64
 
       - name: Download the ARM64 Windows app
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: app-win-arm64
           path: artifacts/win-arm64
 
       - name: Download the Linux and macOS archives
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: packages-*
           merge-multiple: true
           path: release
 
       - name: Download the unsigned NuGet packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: nuget-unsigned
           path: release
@@ -309,7 +309,7 @@ jobs:
           output: release/safesign-${{ needs.build.outputs.semver2 }}-win-arm64.zip
 
       - name: Upload the release files
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-assets
           path: release
@@ -317,7 +317,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload the signed NuGet packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nuget-signed
           path: release/*.nupkg
@@ -341,7 +341,7 @@ jobs:
             11.0.x
 
       - name: Download signed packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: nuget-signed
           path: signed
