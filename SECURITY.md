@@ -2,11 +2,12 @@
 
 ## Supported versions
 
-Only the latest released version of each package on NuGet is supported:
+Only the latest released version of each package and binary on NuGet and GitHub Releases is supported:
 
-- [StyleSharp.Analyzers](https://www.nuget.org/packages/StyleSharp.Analyzers/)
-- [PerformanceSharp.Analyzers](https://www.nuget.org/packages/PerformanceSharp.Analyzers/)
-- [SecuritySharp.Analyzers](https://www.nuget.org/packages/SecuritySharp.Analyzers/)
+- [SafeSign](https://www.nuget.org/packages/SafeSign/)
+- [SafeSign.Signing](https://www.nuget.org/packages/SafeSign.Signing/)
+- [SafeSign.Formats](https://www.nuget.org/packages/SafeSign.Formats/)
+- [SafeSign.Providers](https://www.nuget.org/packages/SafeSign.Providers/)
 
 Fixes ship in a new release; no patches are issued for earlier versions. Upgrade to the latest
 version before reporting an issue.
@@ -15,13 +16,13 @@ version before reporting an issue.
 
 Report vulnerabilities through GitHub private vulnerability reporting:
 
-**[Report a vulnerability](https://github.com/glennawatson/RoslynCommonAnalyzers/security/advisories/new)**
+**[Report a vulnerability](https://github.com/glennawatson/SafeSign/security/advisories/new)**
 
 Do not open a public issue, pull request, or discussion for a security report.
 
-Include the package and version you tested, the target framework, the SDK version and the Roslyn
-analyzer slot it loaded, steps to reproduce, and the impact you believe it has. A minimal
-reproduction project is the most useful thing you can attach.
+Include the package or binary and version you tested, the operating system and target framework,
+the file format or signing provider involved, steps to reproduce, and the impact you believe it
+has. A minimal reproduction project or sample input file is the most useful thing you can attach.
 
 You will get an acknowledgement on the advisory thread, and updates there as the report is triaged
 and fixed. Once a fix is released the advisory is published with credit to the reporter unless you
