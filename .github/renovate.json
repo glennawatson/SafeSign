@@ -5,6 +5,7 @@
     ":separateMajorReleases",
     ":combinePatchMinorReleases",
     "group:dotnetMonorepo",
+    "group:nugetMonorepo",
     "security:openssf-scorecard"
   ],
   "mode": "full",
@@ -24,42 +25,59 @@
   },
   "packageRules": [
     {
-      "description": "Logging and its console provider ship from dotnet/runtime together; mixed versions pull two runtimes' worth of abstractions.",
+      "description": "TUnit and the testing-platform extensions move together; a mismatch breaks the run rather than a test.",
       "matchManagers": ["nuget"],
-      "matchPackageNames": ["/^Microsoft\\.Extensions\\.Logging(\\.|$)/"],
-      "groupName": "Microsoft.Extensions.Logging"
+      "matchPackageNames": ["/^TUnit(\\.|$)/", "/^Microsoft\\.Testing\\./"],
+      "groupName": "test runner"
     },
     {
-      "description": "Directory.Packages.props pins the runtime packages per target framework. The net10.0 line stays on 10.x.",
+      "description": "Refit packages move in lockstep.",
       "matchManagers": ["nuget"],
-      "matchPackageNames": ["/^Microsoft\\.Extensions\\./"],
-      "matchCurrentVersion": "/^10\\./",
-      "allowedVersions": "/^10\\./"
+      "matchPackageNames": ["/^Refit(\\.|$)/"],
+      "groupName": "Refit"
     },
     {
-      "description": "Directory.Packages.props pins the runtime packages per target framework. The net11.0 line stays on 11.x; a newer major means adding a target framework.",
+      "description": "Build analyzers are grouped together and labelled build-gate since warnings are treated as errors.",
       "matchManagers": ["nuget"],
-      "matchPackageNames": ["/^Microsoft\\.Extensions\\./"],
-      "matchCurrentVersion": "/^11\\./",
-      "allowedVersions": "/^11\\./"
-    },
-    {
-      "description": "StyleSharp, PerformanceSharp and SecuritySharp ship from one pipeline and share $(RoslynCommonAnalyzersVersion), so one PR moves the property.",
-      "matchManagers": ["nuget"],
-      "matchPackageNames": ["/^(StyleSharp|PerformanceSharp|SecuritySharp)\\.Analyzers$/"],
-      "groupName": "RoslynCommonAnalyzers",
+      "matchPackageNames": [
+        "StyleSharp.Analyzers",
+        "PerformanceSharp.Analyzers",
+        "SecuritySharp.Analyzers",
+        "PublicApiSharp.Analyzers"
+      ],
+      "groupName": "build analyzers",
       "labels": ["dependencies", "build-gate"]
     },
     {
-      "description": "MinVer decides the shipped version; the release actions stamp the same versions with minver-cli.",
+      "description": "MinVer decides the shipped version.",
       "matchManagers": ["nuget"],
       "matchPackageNames": ["/^MinVer$/"],
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": true
     },
     {
+      "description": "The current stable BenchmarkDotNet cannot run .NET 11 benchmarks; track previews until stable support ships.",
+      "matchManagers": ["nuget"],
+      "matchPackageNames": ["BenchmarkDotNet"],
+      "ignoreUnstable": false
+    },
+    {
+      "description": "The SDK band is updated deliberately via the dependency dashboard.",
+      "matchManagers": ["nuget"],
+      "matchDepTypes": ["dotnet-sdk", "msbuild-sdk"],
+      "dependencyDashboardApproval": true,
+      "ignoreUnstable": false
+    },
+    {
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Keep shared actions pinned to a commit while tracking main through the ref comment.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["glennawatson/actions-common"],
+      "pinDigests": true,
+      "groupName": "shared GitHub Actions"
     },
     {
       "description": "Pinning names the group it pins rather than the generic dependencies topic.",
@@ -70,16 +88,16 @@
       }
     },
     {
-      "description": "Minor, patch and digest updates to actions from GitHub merge automatically.",
+      "description": "Minor, patch and digest updates to actions from GitHub and Microsoft merge automatically.",
       "matchManagers": ["github-actions"],
-      "matchPackageNames": ["/^actions\\//", "/^github\\//"],
+      "matchPackageNames": ["/^actions\\//", "/^github\\//", "/^microsoft\\//"],
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "automerge": true
     },
     {
-      "description": "Digest updates to the ReactiveUI signing image merge automatically.",
+      "description": "Digest updates to Microsoft's, Docker's Dockerfile syntax and ReactiveUI's container images merge automatically.",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/reactiveui/certum-signer"],
+      "matchPackageNames": ["/^mcr\\.microsoft\\.com\\//", "/^ghcr\\.io\\/reactiveui\\//", "docker/dockerfile"],
       "matchUpdateTypes": ["digest", "pin", "pinDigest"],
       "automerge": true
     }
