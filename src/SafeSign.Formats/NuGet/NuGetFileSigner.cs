@@ -15,7 +15,7 @@ namespace SafeSign.Formats.NuGet;
 /// <summary>
 /// Signs NuGet packages (<c>.nupkg</c>) natively according to the NuGet Package Signature Specification by
 /// embedding an Author Primary Signature (<c>1.2.840.113549.1.9.16.6.1</c>) with <c>SigningCertificateV2</c> at
-/// <c>.signature.p7s</c>.
+/// <c>.signature.p7s</c>. Unsigned <c>.dll</c> and <c>.exe</c> files inside the package are Authenticode signed first.
 /// </summary>
 [DebuggerDisplay("{Name,nq}")]
 public sealed class NuGetFileSigner : IFileFormatSigner
@@ -85,6 +85,13 @@ public sealed class NuGetFileSigner : IFileFormatSigner
 
         _ = GetHashPrefix(session.DigestAlgorithm);
         var unsignedZip = NuGetSignatureArchive.RemoveSignature(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false));
+
+        // The DLLs are signed before the archive hash is taken, so the package signature covers the signed files.
+        if (session.SignPackageContents)
+        {
+            unsignedZip = await NuGetPackageContents.SignPeFilesAsync(unsignedZip, session, cancellationToken).ConfigureAwait(false);
+        }
+
         var signatureContentBytes = CreateSignatureContent(session.DigestAlgorithm, CryptographicOperations.HashData(session.DigestAlgorithm, unsignedZip));
 
         var contentWriter = new AsnWriter(AsnEncodingRules.DER);

@@ -100,6 +100,8 @@ public static class SafeSignCli
         var descriptionOption = new Option<string?>("--description", "-d") { Description = "Optional program name embedded in Authenticode signatures." };
         var descriptionUrlOption = new Option<string?>("--description-url", "-u") { Description = "Optional 'more information' URL embedded in Authenticode signatures." };
 
+        var skipContentsOption = new Option<bool>("--skip-package-contents") { Description = "Sign only the package, leaving the DLLs and EXEs inside .nupkg files unsigned." };
+
         var command = new Command("sign", "Sign one or more files using the specified signing provider.")
         {
             filesArgument,
@@ -111,6 +113,7 @@ public static class SafeSignCli
             timestampHashOption,
             descriptionOption,
             descriptionUrlOption,
+            skipContentsOption,
         };
 
         command.SetAction((parseResult, cancellationToken) =>
@@ -124,7 +127,8 @@ public static class SafeSignCli
                 parseResult.GetValue(timestampUrlOption),
                 parseResult.GetValue(timestampHashOption) ?? DefaultHashAlgorithm,
                 parseResult.GetValue(descriptionOption),
-                parseResult.GetValue(descriptionUrlOption));
+                parseResult.GetValue(descriptionUrlOption),
+                parseResult.GetValue(skipContentsOption));
 
             return SignRunner.ExecuteAsync(input, services, environment, output, error, cancellationToken);
         });

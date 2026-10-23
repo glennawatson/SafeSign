@@ -163,7 +163,8 @@ public static class SignRunner
                 timestampSettings,
                 string.IsNullOrWhiteSpace(input.Description) ? null : input.Description,
                 descriptionUrl,
-                services.Time);
+                services.Time,
+                !input.SkipPackageContents);
 
             for (var i = 0; i < input.Files.Length; i++)
             {

@@ -87,6 +87,7 @@ safesign formats                     List all supported file formats and their s
 | `--timestamp-hash <alg>` | — | Digest algorithm for the RFC 3161 timestamp request: `SHA256` (default), `SHA384`, or `SHA512`. |
 | `--description <text>` | `-d` | Program description embedded in Authenticode `SpcSpOpusInfo`. |
 | `--description-url <uri>` | `-u` | Program URL embedded in Authenticode `SpcSpOpusInfo`. |
+| `--skip-package-contents` | — | Sign only the `.nupkg` itself. By default, unsigned `.dll` and `.exe` files inside it are Authenticode signed first, so Windows (Smart App Control, Visual Studio) sees signed DLLs. Files that already carry a signature are left alone. |
 
 ---
 
@@ -177,7 +178,7 @@ Run `safesign formats` to view all registered format handlers. SafeSign implemen
 | **Security Catalog** | `.cat` | ASN.1 DER `CertTrustList` (`1.3.6.1.4.1.311.10.1`) re-signing inside outer CMS `SignedData` while preserving catalog member hashes and attributes | `Working` |
 | **AppX / MSIX** | `.appx`, `.msix`, `.appxbundle`, `.msixbundle` | `AppxBlockMap.xml`, `AppxMetadata/CodeIntegrity.cat`, and `[Content_Types].xml` `APPX_AXPC`/`APPX_AXCD`/`APPX_AXCI`/`APPX_AXCT` digest calculation and `AppxSignature.p7x` (`PKCX` prefix + Authenticode `SPC_SIPINFO`) | `Working` |
 | **Dynamics 365 NAVX** | `.navx` | `NAVX` 40-byte package header + OPC ZIP payload digest and `NVSG` signature trailer (`SPC_SIPINFO` GUID `F5256E31-BA25-4468-ABA9-AB9B38F6F138`) | `Working` |
-| **NuGet Package** | `.nupkg`, `.snupkg` | NuGet v1 `.signature.p7s` Primary Author Signature with RFC 5035 `SigningCertificateV2` (`1.2.840.113549.1.9.16.2.47`), `commitment-type-indication` (`1.2.840.113549.1.9.16.6.1`), and Central Directory hash | `Working` |
+| **NuGet Package** | `.nupkg`, `.snupkg` | NuGet v1 `.signature.p7s` Primary Author Signature with RFC 5035 `SigningCertificateV2` (`1.2.840.113549.1.9.16.2.47`), `commitment-type-indication` (`1.2.840.113549.1.9.16.6.1`), and Central Directory hash. Unsigned `.dll`/`.exe` files inside the package get an Authenticode signature first (opt out with `--skip-package-contents`) | `Working` |
 | **Scripts** | `.ps1`, `.psm1`, `.psd1`, `.ps1xml`, `.cdxml`, `.psc1`, `.vbs`, `.vbe`, `.js`, `.wsf` | UTF-16LE Authenticode `SPC_SIPINFO` digest and native `# SIG #` / `<!-- SIG # -->` / `'' SIG ''` / `// SIG //` base64 signature blocks preserving BOM and encoding | `Working` |
 | **RPM v4** | `.rpm` | RPM v4 Lead + Signature Header reconstruction embedding CMS/PKCS #7 DER signatures in tags `268` (`RPMSIGTAG_RSA` / header-only) and `269` (`RPMSIGTAG_PGP` / header+payload) | `Working` |
 | **Debian Package** | `.deb`, `.udeb` | Uses `ar` archives (`debsigs` / `dpkg-sig`) with OpenPGP (RFC 4880) signatures rather than X.509/CMS. OpenPGP is out of scope for SafeSign. | `OutOfScope` |
