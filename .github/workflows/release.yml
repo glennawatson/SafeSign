@@ -53,7 +53,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           stamp-version: 'false'
           dotnet-versions: |
@@ -61,7 +61,7 @@ jobs:
             11.0.x
 
       - name: Validate version inputs
-        uses: glennawatson/actions-common/.github/actions/release-inputs-validate@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/release-inputs-validate@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           bump: ${{ inputs.bump != '(pick one)' && inputs.bump || '' }}
           pre-release: ${{ inputs.preRelease }}
@@ -70,7 +70,7 @@ jobs:
       - name: Compute version and tag
         if: inputs.bump != '(pick one)' && inputs.versionOverride == ''
         id: bump
-        uses: glennawatson/actions-common/.github/actions/compute-version-and-tag@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/compute-version-and-tag@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           bump: ${{ inputs.bump }}
           tag-prefix: 'v'
@@ -80,7 +80,7 @@ jobs:
       # compute-version-and-tag rejects an existing bump tag; an existing override tag is rejected here.
       - name: Resolve release tag
         id: tagname
-        uses: glennawatson/actions-common/.github/actions/release-tag-resolve@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/release-tag-resolve@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           bump-tag: ${{ steps.bump.outputs.tag }}
           bump-prerelease: ${{ steps.bump.outputs.prerelease }}
@@ -89,7 +89,7 @@ jobs:
 
       - name: Stamp version with MinVer
         id: minver
-        uses: glennawatson/actions-common/.github/actions/minver@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/minver@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           tag-prefix: 'v'
           minimum-major-minor: '1.0'
@@ -97,7 +97,7 @@ jobs:
           version-override: ${{ inputs.versionOverride != '' && inputs.versionOverride || steps.bump.outputs.version }}
 
       - name: Build
-        uses: glennawatson/actions-common/.github/actions/dotnet-build@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-build@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           solution-file: SafeSign.slnx
 
@@ -132,7 +132,7 @@ jobs:
           ref: ${{ inputs.sourceRef }}
 
       - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           stamp-version: 'false'
           dotnet-versions: |
@@ -171,7 +171,7 @@ jobs:
           ref: ${{ inputs.sourceRef }}
 
       - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           stamp-version: 'false'
           dotnet-versions: |
@@ -217,7 +217,7 @@ jobs:
           ref: ${{ inputs.sourceRef }}
 
       - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           stamp-version: 'false'
           dotnet-versions: |
@@ -297,13 +297,13 @@ jobs:
             --description-url https://github.com/glennawatson/SafeSign
 
       - name: Zip the x64 Windows app
-        uses: glennawatson/actions-common/.github/actions/zip-build@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/zip-build@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           source: artifacts/win-x64
           output: release/safesign-${{ needs.build.outputs.semver2 }}-win-x64.zip
 
       - name: Zip the ARM64 Windows app
-        uses: glennawatson/actions-common/.github/actions/zip-build@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/zip-build@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           source: artifacts/win-arm64
           output: release/safesign-${{ needs.build.outputs.semver2 }}-win-arm64.zip
@@ -334,7 +334,7 @@ jobs:
       id-token: write
     steps:
       - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
         with:
           stamp-version: 'false'
           dotnet-versions: |
@@ -362,7 +362,7 @@ jobs:
     needs: [ build, publish-nuget ]
     permissions:
       contents: write
-    uses: glennawatson/actions-common/.github/workflows/workflow-common-create-release.yml@7f2014219353aee799dfeef2a9b97acaeabca0b8 # main
+    uses: glennawatson/actions-common/.github/workflows/workflow-common-create-release.yml@315788024be8e61daa4f2b957e6476746211b522 # main
     with:
       version: ${{ needs.build.outputs.semver2 }}
       tag: ${{ needs.build.outputs.tag }}
