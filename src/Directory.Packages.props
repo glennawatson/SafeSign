@@ -16,9 +16,9 @@
   </ItemGroup>
 
   <ItemGroup Label="Http">
-    <PackageVersion Include="Refit" Version="16.3.0" />
-    <PackageVersion Include="Refit.HttpClientFactory" Version="16.3.0" />
-    <PackageVersion Include="Refit.Testing" Version="16.3.0" />
+    <PackageVersion Include="Refit" Version="16.4.0" />
+    <PackageVersion Include="Refit.HttpClientFactory" Version="16.4.0" />
+    <PackageVersion Include="Refit.Testing" Version="16.4.0" />
   </ItemGroup>
 
   <!-- .NET 10 uses stable packages; .NET 11 uses its release-candidate packages. -->
@@ -50,7 +50,7 @@
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
     <PackageVersion Include="NSubstitute" Version="6.2.0" />
-    <PackageVersion Include="TUnit" Version="1.75.0" />
+    <PackageVersion Include="TUnit" Version="1.76.0" />
   </ItemGroup>
 
 </Project>

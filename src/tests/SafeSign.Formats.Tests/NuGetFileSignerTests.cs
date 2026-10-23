@@ -11,6 +11,7 @@ using System.Text;
 using SafeSign.Formats.Compression;
 using SafeSign.Formats.NuGet;
 using SafeSign.Signing;
+using SafeSign.Signing.Pe;
 
 namespace SafeSign.Formats.Tests;
 
@@ -37,6 +38,12 @@ public sealed class NuGetFileSignerTests
 
     /// <summary>The length of the fake assembly content in the sample package.</summary>
     private const int SampleAssemblyLength = 2048;
+
+    /// <summary>The file name used for packages written to a temporary folder.</summary>
+    private const string PackageFileName = "Sample.1.0.0.nupkg";
+
+    /// <summary>The entry path of the DLL in the package built around a real PE image.</summary>
+    private const string SampleDllPath = "lib/net10.0/Sample.dll";
 
     /// <summary>Central directory header: version made by.</summary>
     private const int CdVersionMadeBy = 4;
@@ -168,7 +175,7 @@ public sealed class NuGetFileSignerTests
         try
         {
             var unsigned = CreateSamplePackage();
-            var path = Path.Combine(tempDir.FullName, "Sample.1.0.0.nupkg");
+            var path = Path.Combine(tempDir.FullName, PackageFileName);
             await File.WriteAllBytesAsync(path, unsigned);
 
             var signer = new NuGetFileSigner();
@@ -245,6 +252,94 @@ public sealed class NuGetFileSignerTests
         await Assert.That(async () => await SignSampleAsync(session)).Throws<NotSupportedException>();
     }
 
+    /// <summary>Verifies the DLL inside a package is Authenticode signed and the package signature still covers the signed bytes.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task Sign_SignsTheUnsignedDllInsideThePackage()
+    {
+        using var provider = new TestFormatSigningProvider();
+        var dll = await ReadUnsignedDllAsync();
+
+        var signed = await SignPackageAsync(CreatePackageWithDll(dll), provider.CreateSession());
+
+        var signedDll = ReadEntry(signed, SampleDllPath);
+        await Assert.That(PeLayoutReader.Read(signedDll, signedDll.Length).CertificateTableSize).IsGreaterThan(0);
+
+        var unsignedZip = NuGetSignatureArchive.RemoveSignature(signed);
+        var cms = new SignedCms();
+        cms.Decode(ReadEntry(signed, NuGetFileSigner.SignatureEntryPath));
+        var expected = $"Version:1\n\n2.16.840.1.101.3.4.2.1-Hash:{Convert.ToBase64String(SHA256.HashData(unsignedZip))}\n\n";
+        await Assert.That(Encoding.UTF8.GetString(cms.ContentInfo.Content)).IsEqualTo(expected);
+    }
+
+    /// <summary>Verifies that opting out leaves the DLL inside the package exactly as it was.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task Sign_WithPackageContentsOptOut_LeavesTheDllUnsigned()
+    {
+        using var provider = new TestFormatSigningProvider();
+        var dll = await ReadUnsignedDllAsync();
+
+        var signed = await SignPackageAsync(CreatePackageWithDll(dll), provider.CreateSession() with { SignPackageContents = false });
+
+        await Assert.That(CryptographicOperations.FixedTimeEquals(ReadEntry(signed, SampleDllPath), dll)).IsTrue();
+    }
+
+    /// <summary>Verifies that a DLL which already carries a signature is not re-signed, so third-party signatures survive.</summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Test]
+    public async Task Resign_LeavesAnAlreadySignedDllUntouched()
+    {
+        using var provider = new TestFormatSigningProvider();
+        var session = provider.CreateSession();
+        var first = await SignPackageAsync(CreatePackageWithDll(await ReadUnsignedDllAsync()), session);
+        var firstDll = ReadEntry(first, SampleDllPath);
+
+        var second = await SignPackageAsync(first, session);
+
+        await Assert.That(CryptographicOperations.FixedTimeEquals(ReadEntry(second, SampleDllPath), firstDll)).IsTrue();
+    }
+
+    /// <summary>Reads a real, unsigned PE image: the assembly under test.</summary>
+    /// <returns>The image bytes.</returns>
+    private static Task<byte[]> ReadUnsignedDllAsync() => File.ReadAllBytesAsync(typeof(NuGetFileSigner).Assembly.Location);
+
+    /// <summary>Creates a package whose only library is the given DLL.</summary>
+    /// <param name="dll">The DLL bytes.</param>
+    /// <returns>The package bytes.</returns>
+    private static byte[] CreatePackageWithDll(byte[] dll)
+    {
+        using var stream = MemoryStreams.OpenWrite(InitialZipBufferCapacity, out var getBytes);
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            WriteEntry(archive, "Sample.nuspec", "<package />");
+            using var entryStream = archive.CreateEntry(SampleDllPath, CompressionLevel.Optimal).Open();
+            entryStream.Write(dll);
+        }
+
+        return getBytes();
+    }
+
+    /// <summary>Signs package bytes through <see cref="NuGetFileSigner"/> using a temporary file.</summary>
+    /// <param name="package">The package bytes.</param>
+    /// <param name="session">The signing session.</param>
+    /// <returns>The signed package bytes.</returns>
+    private static async Task<byte[]> SignPackageAsync(byte[] package, SigningSession session)
+    {
+        var tempDir = Directory.CreateTempSubdirectory("safesign-nupkg-contents-");
+        try
+        {
+            var path = Path.Combine(tempDir.FullName, PackageFileName);
+            await File.WriteAllBytesAsync(path, package);
+            await new NuGetFileSigner().SignAsync(new(path, path, session), CancellationToken.None);
+            return await File.ReadAllBytesAsync(path);
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
+    }
+
     /// <summary>Signs a fresh sample package and returns the unsigned and signed bytes.</summary>
     /// <param name="session">The signing session.</param>
     /// <returns>The unsigned and signed package bytes.</returns>
@@ -254,7 +349,7 @@ public sealed class NuGetFileSignerTests
         try
         {
             var unsigned = CreateSamplePackage();
-            var path = Path.Combine(tempDir.FullName, "Sample.1.0.0.nupkg");
+            var path = Path.Combine(tempDir.FullName, PackageFileName);
             await File.WriteAllBytesAsync(path, unsigned);
             await new NuGetFileSigner().SignAsync(new(path, path, session), CancellationToken.None);
             return new(unsigned, await File.ReadAllBytesAsync(path));

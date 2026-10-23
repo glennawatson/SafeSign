@@ -15,6 +15,7 @@ namespace SafeSign.Signing;
 /// <param name="Description">The optional program name written into Authenticode signatures.</param>
 /// <param name="DescriptionUrl">The optional "more information" URL written into Authenticode signatures.</param>
 /// <param name="Time">The clock for signing-time attributes.</param>
+/// <param name="SignPackageContents">True to Authenticode sign the unsigned DLLs and EXEs inside a package (such as a NuGet package) before signing the package itself.</param>
 [DebuggerDisplay("{Provider.Name,nq} {DigestAlgorithm.Name,nq}")]
 public sealed record SigningSession(
     ISigningProvider Provider,
@@ -23,4 +24,5 @@ public sealed record SigningSession(
     TimestampSettings? Timestamp,
     string? Description,
     Uri? DescriptionUrl,
-    TimeProvider Time);
+    TimeProvider Time,
+    bool SignPackageContents = true);
