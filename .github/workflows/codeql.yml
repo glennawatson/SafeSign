@@ -17,7 +17,7 @@ permissions:
 jobs:
   codeql:
     name: CodeQL
-    uses: glennawatson/actions-common/.github/workflows/workflow-common-codeql.yml@315788024be8e61daa4f2b957e6476746211b522 # main
+    uses: glennawatson/actions-common/.github/workflows/workflow-common-codeql.yml@4d538f76071ed73496cbf406cebe85e760fb734d # main
     with:
       solutionFile: SafeSign.slnx
       csharpRunsOn: ubuntu-latest
