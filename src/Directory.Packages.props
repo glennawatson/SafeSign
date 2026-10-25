@@ -25,16 +25,16 @@
   <Choose>
     <When Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
       <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.2.26504.105" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.2.26504.105" />
-        <PackageVersion Include="System.IO.Hashing" Version="11.0.0-rc.2.26504.105" />
+        <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.3.26522.148" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.3.26522.148" />
+        <PackageVersion Include="System.IO.Hashing" Version="11.0.0-rc.3.26522.148" />
       </ItemGroup>
     </When>
     <Otherwise>
       <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="2.0.13" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
-        <PackageVersion Include="System.IO.Hashing" Version="10.0.13" />
+        <PackageVersion Include="System.CommandLine" Version="2.0.14" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+        <PackageVersion Include="System.IO.Hashing" Version="10.0.14" />
       </ItemGroup>
     </Otherwise>
   </Choose>
