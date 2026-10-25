@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     name: Build and test
-    uses: glennawatson/actions-common/.github/workflows/workflow-common-setup-and-build.yml@315788024be8e61daa4f2b957e6476746211b522 # main
+    uses: glennawatson/actions-common/.github/workflows/workflow-common-setup-and-build.yml@4d538f76071ed73496cbf406cebe85e760fb734d # main
     with:
       solutionFile: SafeSign.slnx
       minverTagPrefix: 'v'
@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
+        uses: glennawatson/actions-common/.github/actions/dotnet-environment@4d538f76071ed73496cbf406cebe85e760fb734d # main
         with:
           stamp-version: 'false'
           dotnet-versions: |

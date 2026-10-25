@@ -12,7 +12,7 @@ permissions:
 jobs:
   sonarcloud:
     name: Build, test, and analyze
-    uses: glennawatson/actions-common/.github/workflows/workflow-common-sonarcloud.yml@315788024be8e61daa4f2b957e6476746211b522 # main
+    uses: glennawatson/actions-common/.github/workflows/workflow-common-sonarcloud.yml@4d538f76071ed73496cbf406cebe85e760fb734d # main
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     with:
