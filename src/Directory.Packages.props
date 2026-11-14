@@ -25,16 +25,16 @@
   <Choose>
     <When Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
       <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.2.26504.105" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.2.26504.105" />
-        <PackageVersion Include="System.IO.Hashing" Version="11.0.0-rc.2.26504.105" />
+        <PackageVersion Include="System.CommandLine" Version="3.0.0" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
+        <PackageVersion Include="System.IO.Hashing" Version="11.0.0" />
       </ItemGroup>
     </When>
     <Otherwise>
       <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="2.0.13" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
-        <PackageVersion Include="System.IO.Hashing" Version="10.0.13" />
+        <PackageVersion Include="System.CommandLine" Version="2.0.15" />
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
+        <PackageVersion Include="System.IO.Hashing" Version="10.0.15" />
       </ItemGroup>
     </Otherwise>
   </Choose>
@@ -50,7 +50,7 @@
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
     <PackageVersion Include="NSubstitute" Version="6.2.0" />
-    <PackageVersion Include="TUnit" Version="1.76.0" />
+    <PackageVersion Include="TUnit" Version="1.84.0" />
   </ItemGroup>
 
 </Project>
