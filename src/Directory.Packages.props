@@ -21,24 +21,6 @@
     <PackageVersion Include="Refit.Testing" Version="16.4.0" />
   </ItemGroup>
 
-  <!-- .NET 10 uses stable packages; .NET 11 uses its release-candidate packages. -->
-  <Choose>
-    <When Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
-      <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="3.0.0" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
-        <PackageVersion Include="System.IO.Hashing" Version="11.0.0" />
-      </ItemGroup>
-    </When>
-    <Otherwise>
-      <ItemGroup Label="Framework-matched">
-        <PackageVersion Include="System.CommandLine" Version="2.0.15" />
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
-        <PackageVersion Include="System.IO.Hashing" Version="10.0.15" />
-      </ItemGroup>
-    </Otherwise>
-  </Choose>
-
   <ItemGroup Label="Benchmarks">
     <PackageVersion Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
   </ItemGroup>
@@ -53,4 +35,21 @@
     <PackageVersion Include="TUnit" Version="1.84.0" />
   </ItemGroup>
 
+  <!-- Each target framework uses its matching package major versions. -->
+  <Choose>
+    <When Condition="'$(TargetFramework)' != '' And $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
+      <ItemGroup>
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
+        <PackageVersion Include="System.IO.Hashing" Version="11.0.0" />
+        <PackageVersion Include="System.CommandLine" Version="3.0.0" />
+      </ItemGroup>
+    </When>
+    <Otherwise>
+      <ItemGroup>
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
+        <PackageVersion Include="System.IO.Hashing" Version="10.0.15" />
+        <PackageVersion Include="System.CommandLine" Version="2.0.15" />
+      </ItemGroup>
+    </Otherwise>
+  </Choose>
 </Project>

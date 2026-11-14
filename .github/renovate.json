@@ -100,6 +100,62 @@
       "matchPackageNames": ["/^mcr\\.microsoft\\.com\\//", "/^ghcr\\.io\\/reactiveui\\//", "docker/dockerfile"],
       "matchUpdateTypes": ["digest", "pin", "pinDigest"],
       "automerge": true
+    },
+    {
+      "description": "Keep .NET 10 package entries on 10.x.",
+      "matchDatasources": ["nuget"],
+      "matchPackageNames": [
+        "/^Microsoft\\.Extensions\\./",
+        "/^Microsoft\\.AspNetCore\\./",
+        "/^Microsoft\\.NETCore\\./",
+        "/^Microsoft\\.SourceLink\\./",
+        "Microsoft.Build.Tasks.Git",
+        "/^System\\./"
+      ],
+      "matchCurrentValue": "/^10\\./",
+      "allowedVersions": "/^10\\./",
+      "ignoreUnstable": true,
+      "groupName": ".NET 10 packages",
+      "groupSlug": "dotnet-10"
+    },
+    {
+      "description": "Keep .NET 11 package entries on 11.x.",
+      "matchDatasources": ["nuget"],
+      "matchPackageNames": [
+        "/^Microsoft\\.Extensions\\./",
+        "/^Microsoft\\.AspNetCore\\./",
+        "/^Microsoft\\.NETCore\\./",
+        "/^Microsoft\\.SourceLink\\./",
+        "Microsoft.Build.Tasks.Git",
+        "/^System\\./"
+      ],
+      "matchCurrentValue": "/^11\\./",
+      "allowedVersions": "/^11\\./",
+      "ignoreUnstable": false,
+      "groupName": ".NET 11 packages",
+      "groupSlug": "dotnet-11"
+    },
+    {
+      "description": "Keep the System.CommandLine 2.x entry on its framework-specific major.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchPackageNames": [
+        "System.CommandLine"
+      ],
+      "matchCurrentValue": "/^2\\./",
+      "allowedVersions": "/^2\\./"
+    },
+    {
+      "description": "Keep the System.CommandLine 3.x entry on its framework-specific major.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchPackageNames": [
+        "System.CommandLine"
+      ],
+      "matchCurrentValue": "/^3\\./",
+      "allowedVersions": "/^3\\./"
     }
   ]
 }
