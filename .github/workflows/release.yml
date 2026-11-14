@@ -1,5 +1,4 @@
 name: Release
-
 on:
   workflow_dispatch:
     inputs:
@@ -8,32 +7,27 @@ on:
         required: true
         type: choice
         options:
-          - '(pick one)'
-          - major
-          - minor
-          - patch
-
+        - '(pick one)'
+        - major
+        - minor
+        - patch
       preRelease:
         description: 'Pre-release channel (e.g. beta, rc). The version becomes <bumped-core>-<channel>.<N>. Empty = stable release.'
         required: false
         type: string
         default: ''
-
       versionOverride:
         description: 'Exact version to release (e.g. 4.2.5), bypassing the bump from the latest tag. Leave bump at "(pick one)".'
         required: false
         type: string
         default: ''
-
       sourceRef:
         description: 'Git ref (tag, branch or SHA) to release from. Empty = the ref this run was started on.'
         required: false
         type: string
         default: ''
-
 permissions:
   contents: read
-
 jobs:
   build:
     name: Build and pack NuGet
@@ -46,73 +40,61 @@ jobs:
       prerelease: ${{ steps.tagname.outputs.prerelease }}
       sourceSha: ${{ steps.tagname.outputs.sha }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.sourceRef }}
-          fetch-depth: 0
-
-      - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          stamp-version: 'false'
-          dotnet-versions: |
-            10.0.x
-            11.0.x
-
-      - name: Validate version inputs
-        uses: glennawatson/actions-common/.github/actions/release-inputs-validate@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          bump: ${{ inputs.bump != '(pick one)' && inputs.bump || '' }}
-          pre-release: ${{ inputs.preRelease }}
-          version-override: ${{ inputs.versionOverride }}
-
-      - name: Compute version and tag
-        if: inputs.bump != '(pick one)' && inputs.versionOverride == ''
-        id: bump
-        uses: glennawatson/actions-common/.github/actions/compute-version-and-tag@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          bump: ${{ inputs.bump }}
-          tag-prefix: 'v'
-          pre-release-id: ${{ inputs.preRelease }}
-          push-tag: 'false'
-
-      # compute-version-and-tag rejects an existing bump tag; an existing override tag is rejected here.
-      - name: Resolve release tag
-        id: tagname
-        uses: glennawatson/actions-common/.github/actions/release-tag-resolve@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          bump-tag: ${{ steps.bump.outputs.tag }}
-          bump-prerelease: ${{ steps.bump.outputs.prerelease }}
-          version-override: ${{ inputs.versionOverride }}
-          tag-prefix: 'v'
-
-      - name: Stamp version with MinVer
-        id: minver
-        uses: glennawatson/actions-common/.github/actions/minver@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          tag-prefix: 'v'
-          minimum-major-minor: '1.0'
-          auto-increment: minor
-          version-override: ${{ inputs.versionOverride != '' && inputs.versionOverride || steps.bump.outputs.version }}
-
-      - name: Build
-        uses: glennawatson/actions-common/.github/actions/dotnet-build@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          solution-file: SafeSign.slnx
-
-      - name: Pack NuGet packages
-        shell: bash
-        working-directory: src
-        run: dotnet pack SafeSign.slnx --no-build --configuration Release -o "${GITHUB_WORKSPACE}/packages"
-
-      - name: Upload unsigned packages
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: nuget-unsigned
-          path: packages/*.nupkg
-          if-no-files-found: error
-
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.sourceRef }}
+        fetch-depth: 0
+    - name: Setup .NET Environment
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        stamp-version: 'false'
+        dotnet-versions: 11.0.x
+    - name: Validate version inputs
+      uses: glennawatson/actions-common/.github/actions/release-inputs-validate@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        bump: ${{ inputs.bump != '(pick one)' && inputs.bump || '' }}
+        pre-release: ${{ inputs.preRelease }}
+        version-override: ${{ inputs.versionOverride }}
+    - name: Compute version and tag
+      if: inputs.bump != '(pick one)' && inputs.versionOverride == ''
+      id: bump
+      uses: glennawatson/actions-common/.github/actions/compute-version-and-tag@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        bump: ${{ inputs.bump }}
+        tag-prefix: 'v'
+        pre-release-id: ${{ inputs.preRelease }}
+        push-tag: 'false'
+    - name: Resolve release tag
+      id: tagname
+      uses: glennawatson/actions-common/.github/actions/release-tag-resolve@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        bump-tag: ${{ steps.bump.outputs.tag }}
+        bump-prerelease: ${{ steps.bump.outputs.prerelease }}
+        version-override: ${{ inputs.versionOverride }}
+        tag-prefix: 'v'
+    - name: Stamp version with MinVer
+      id: minver
+      uses: glennawatson/actions-common/.github/actions/minver@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        tag-prefix: 'v'
+        minimum-major-minor: '1.0'
+        auto-increment: minor
+        version-override: ${{ inputs.versionOverride != '' && inputs.versionOverride || steps.bump.outputs.version }}
+    - name: Build
+      uses: glennawatson/actions-common/.github/actions/dotnet-build@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        solution-file: SafeSign.slnx
+    - name: Pack NuGet packages
+      shell: bash
+      working-directory: src
+      run: dotnet pack SafeSign.slnx --no-build --configuration Release -o "${GITHUB_WORKSPACE}/packages"
+    - name: Upload unsigned packages
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nuget-unsigned
+        path: packages/*.nupkg
+        if-no-files-found: error
   publish-windows:
     name: Publish ${{ matrix.rid }}
     needs: build
@@ -120,35 +102,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - rid: win-x64
-            runner: windows-latest
-          - rid: win-arm64
-            runner: windows-11-arm
+        - rid: win-x64
+          runner: windows-latest
+        - rid: win-arm64
+          runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.sourceRef }}
-
-      - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          stamp-version: 'false'
-          dotnet-versions: |
-            10.0.x
-            11.0.x
-
-      - name: Publish Native AOT
-        run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "${{ matrix.rid }}" -p:PublishAot=true "-p:Version=${{ needs.build.outputs.semver2 }}" "-p:MinVerVersionOverride=${{ needs.build.outputs.semver2 }}" -o "artifacts/${{ matrix.rid }}"
-
-      - name: Upload the published app
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: app-${{ matrix.rid }}
-          path: artifacts/${{ matrix.rid }}
-          if-no-files-found: error
-
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.sourceRef }}
+    - name: Setup .NET Environment
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        stamp-version: 'false'
+        dotnet-versions: 11.0.x
+    - name: Publish Native AOT
+      run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "${{ matrix.rid }}" -p:PublishAot=true "-p:Version=${{ needs.build.outputs.semver2 }}" "-p:MinVerVersionOverride=${{ needs.build.outputs.semver2 }}" -o "artifacts/${{ matrix.rid }}"
+    - name: Upload the published app
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: app-${{ matrix.rid }}
+        path: artifacts/${{ matrix.rid }}
+        if-no-files-found: error
   package-linux:
     name: Package ${{ matrix.rid }}
     needs: build
@@ -156,90 +132,75 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - rid: linux-x64
-            runner: ubuntu-latest
-          - rid: linux-arm64
-            runner: ubuntu-24.04-arm
+        - rid: linux-x64
+          runner: ubuntu-latest
+        - rid: linux-arm64
+          runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     env:
       RID: ${{ matrix.rid }}
       VERSION: ${{ needs.build.outputs.semver2 }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.sourceRef }}
-
-      - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          stamp-version: 'false'
-          dotnet-versions: |
-            10.0.x
-            11.0.x
-
-      - name: Publish Native AOT
-        run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "$RID" -p:PublishAot=true "-p:Version=$VERSION" "-p:MinVerVersionOverride=$VERSION" -o "artifacts/$RID"
-
-      - name: Build the tar.gz
-        run: tar -czf "artifacts/safesign-$VERSION-$RID.tar.gz" -C artifacts "$RID"
-
-      - name: Upload the Linux binary for dogfooding
-        if: matrix.rid == 'linux-x64'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: app-linux-x64
-          path: artifacts/linux-x64
-          if-no-files-found: error
-
-      - name: Upload the Linux archive
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: packages-${{ matrix.rid }}
-          path: artifacts/safesign-*.tar.gz
-          if-no-files-found: error
-
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.sourceRef }}
+    - name: Setup .NET Environment
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        stamp-version: 'false'
+        dotnet-versions: 11.0.x
+    - name: Publish Native AOT
+      run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "$RID" -p:PublishAot=true "-p:Version=$VERSION" "-p:MinVerVersionOverride=$VERSION" -o "artifacts/$RID"
+    - name: Build the tar.gz
+      run: tar -czf "artifacts/safesign-$VERSION-$RID.tar.gz" -C artifacts "$RID"
+    - name: Upload the Linux binary for dogfooding
+      if: matrix.rid == 'linux-x64'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: app-linux-x64
+        path: artifacts/linux-x64
+        if-no-files-found: error
+    - name: Upload the Linux archive
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: packages-${{ matrix.rid }}
+        path: artifacts/safesign-*.tar.gz
+        if-no-files-found: error
   package-macos:
     name: Package ${{ matrix.rid }}
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        rid: [ osx-arm64, osx-x64 ]
+        rid: [osx-arm64, osx-x64]
     runs-on: macos-latest
     env:
       RID: ${{ matrix.rid }}
       VERSION: ${{ needs.build.outputs.semver2 }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.sourceRef }}
-
-      - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          stamp-version: 'false'
-          dotnet-versions: |
-            10.0.x
-            11.0.x
-
-      - name: Publish Native AOT
-        run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "$RID" -p:PublishAot=true "-p:Version=$VERSION" "-p:MinVerVersionOverride=$VERSION" -o "artifacts/$RID"
-
-      - name: Build the tar.gz
-        run: tar -czf "artifacts/safesign-$VERSION-$RID.tar.gz" -C artifacts "$RID"
-
-      - name: Upload the macOS archive
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: packages-${{ matrix.rid }}
-          path: artifacts/safesign-*.tar.gz
-          if-no-files-found: error
-
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.sourceRef }}
+    - name: Setup .NET Environment
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        stamp-version: 'false'
+        dotnet-versions: 11.0.x
+    - name: Publish Native AOT
+      run: dotnet publish src/SafeSign/SafeSign.csproj -c Release -f net11.0 -r "$RID" -p:PublishAot=true "-p:Version=$VERSION" "-p:MinVerVersionOverride=$VERSION" -o "artifacts/$RID"
+    - name: Build the tar.gz
+      run: tar -czf "artifacts/safesign-$VERSION-$RID.tar.gz" -C artifacts "$RID"
+    - name: Upload the macOS archive
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: packages-${{ matrix.rid }}
+        path: artifacts/safesign-*.tar.gz
+        if-no-files-found: error
   sign:
     name: Sign everything with SafeSign (Certum SimplySign)
-    needs: [ build, publish-windows, package-linux, package-macos ]
+    needs: [build, publish-windows, package-linux, package-macos]
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -251,81 +212,71 @@ jobs:
       CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
       CERTUM_CERT_FINGERPRINT: ${{ secrets.CERTUM_CERT_FINGERPRINT }}
     steps:
-      - name: Download the Linux Native AOT binary
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: app-linux-x64
-          path: artifacts/linux-x64
-
-      - name: Download the x64 Windows app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: app-win-x64
-          path: artifacts/win-x64
-
-      - name: Download the ARM64 Windows app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: app-win-arm64
-          path: artifacts/win-arm64
-
-      - name: Download the Linux and macOS archives
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: packages-*
-          merge-multiple: true
-          path: release
-
-      - name: Download the unsigned NuGet packages
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: nuget-unsigned
-          path: release
-
-      - name: Dogfood SafeSign to sign Windows executables and NuGet packages
-        shell: bash
-        run: |
-          chmod +x artifacts/linux-x64/SafeSign
-          ./artifacts/linux-x64/SafeSign sign \
-            artifacts/win-x64/SafeSign.exe \
-            artifacts/win-arm64/SafeSign.exe \
-            release/*.nupkg \
-            --provider certum \
-            --hash SHA256 \
-            --timestamp-url http://time.certum.pl \
-            --description "SafeSign" \
-            --description-url https://github.com/glennawatson/SafeSign
-
-      - name: Zip the x64 Windows app
-        uses: glennawatson/actions-common/.github/actions/zip-build@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          source: artifacts/win-x64
-          output: release/safesign-${{ needs.build.outputs.semver2 }}-win-x64.zip
-
-      - name: Zip the ARM64 Windows app
-        uses: glennawatson/actions-common/.github/actions/zip-build@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          source: artifacts/win-arm64
-          output: release/safesign-${{ needs.build.outputs.semver2 }}-win-arm64.zip
-
-      - name: Upload the release files
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: release-assets
-          path: release
-          include-hidden-files: true
-          if-no-files-found: error
-
-      - name: Upload the signed NuGet packages
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: nuget-signed
-          path: release/*.nupkg
-          if-no-files-found: error
-
+    - name: Download the Linux Native AOT binary
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: app-linux-x64
+        path: artifacts/linux-x64
+    - name: Download the x64 Windows app
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: app-win-x64
+        path: artifacts/win-x64
+    - name: Download the ARM64 Windows app
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: app-win-arm64
+        path: artifacts/win-arm64
+    - name: Download the Linux and macOS archives
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        pattern: packages-*
+        merge-multiple: true
+        path: release
+    - name: Download the unsigned NuGet packages
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: nuget-unsigned
+        path: release
+    - name: Dogfood SafeSign to sign Windows executables and NuGet packages
+      shell: bash
+      run: |
+        chmod +x artifacts/linux-x64/SafeSign
+        ./artifacts/linux-x64/SafeSign sign \
+          artifacts/win-x64/SafeSign.exe \
+          artifacts/win-arm64/SafeSign.exe \
+          release/*.nupkg \
+          --provider certum \
+          --hash SHA256 \
+          --timestamp-url http://time.certum.pl \
+          --description "SafeSign" \
+          --description-url https://github.com/glennawatson/SafeSign
+    - name: Zip the x64 Windows app
+      uses: glennawatson/actions-common/.github/actions/zip-build@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        source: artifacts/win-x64
+        output: release/safesign-${{ needs.build.outputs.semver2 }}-win-x64.zip
+    - name: Zip the ARM64 Windows app
+      uses: glennawatson/actions-common/.github/actions/zip-build@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        source: artifacts/win-arm64
+        output: release/safesign-${{ needs.build.outputs.semver2 }}-win-arm64.zip
+    - name: Upload the release files
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: release-assets
+        path: release
+        include-hidden-files: true
+        if-no-files-found: error
+    - name: Upload the signed NuGet packages
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nuget-signed
+        path: release/*.nupkg
+        if-no-files-found: error
   publish-nuget:
     name: Publish to NuGet
-    needs: [ build, sign ]
+    needs: [build, sign]
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -333,36 +284,31 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Setup .NET Environment
-        uses: glennawatson/actions-common/.github/actions/dotnet-environment@315788024be8e61daa4f2b957e6476746211b522 # main
-        with:
-          stamp-version: 'false'
-          dotnet-versions: |
-            11.0.x
-
-      - name: Download signed packages
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: nuget-signed
-          path: signed
-
-      - name: NuGet login (OIDC trusted publishing)
-        id: nuget-login
-        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
-        with:
-          user: ${{ secrets.NUGET_USER }}
-
-      - name: Push to NuGet
-        env:
-          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-        run: dotnet nuget push "signed/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
-
+    - name: Setup .NET Environment
+      uses: glennawatson/actions-common/.github/actions/dotnet-environment@381282a6137c4f3c099ff80d9ee909e5d262998a
+      with:
+        stamp-version: 'false'
+        dotnet-versions: 11.0.x
+    - name: Download signed packages
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: nuget-signed
+        path: signed
+    - name: NuGet login (OIDC trusted publishing)
+      id: nuget-login
+      uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
+      with:
+        user: ${{ secrets.NUGET_USER }}
+    - name: Push to NuGet
+      env:
+        NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+      run: dotnet nuget push "signed/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
   release:
     name: Create release (${{ needs.build.outputs.semver2 }})
-    needs: [ build, publish-nuget ]
+    needs: [build, publish-nuget]
     permissions:
       contents: write
-    uses: glennawatson/actions-common/.github/workflows/workflow-common-create-release.yml@315788024be8e61daa4f2b957e6476746211b522 # main
+    uses: glennawatson/actions-common/.github/workflows/workflow-common-create-release.yml@381282a6137c4f3c099ff80d9ee909e5d262998a
     with:
       version: ${{ needs.build.outputs.semver2 }}
       tag: ${{ needs.build.outputs.tag }}
@@ -370,3 +316,4 @@ jobs:
       artifactName: release-assets
       assetGlob: '*'
       prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
+...
